@@ -318,6 +318,20 @@ test_RT15_13() {
 }
 run_test "RT-15.13" "real synthesis produces audio file (MLX metallib loads)" test_RT15_13
 
+# RT-34.21: speak/yap dry-run applies prose emphasis preprocessing.
+# User action: echo 'that is a lovely *jacket* you are wearing' | yap --dry-run
+# User observes: dry-run text quotes jacket and does not expose literal emphasis markers.
+test_RT34_21() {
+    local output
+    output=$(printf 'that is a lovely *jacket* you are wearing' | "${YAPPER}" speak --dry-run 2>&1)
+    printf '%s' "${output}" | grep -q 'text:   that is a lovely "jacket" you are wearing' || return 1
+    if printf '%s' "${output}" | grep -q '\*jacket\*'; then
+        return 1
+    fi
+    return 0
+}
+run_test "RT-34.21" "speak dry-run applies prose emphasis preprocessing" test_RT34_21
+
 # RT-4.13: SIGINT during playback exits with non-zero status.
 # RT-4.14: Audio stops within 1 second of SIGINT.
 # These tests cannot use the standard run_test harness because they need to
