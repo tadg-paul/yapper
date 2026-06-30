@@ -271,7 +271,10 @@ struct ConvertCommand: ParsableCommand {
             let voice = voices[i]
             fputs("  [\(i + 1)/\(chapters.count)] \(chapter.title) (\(voice.name)) ... ", stderr)
 
-            let chapterText = ScriptConfig.applySubstitutions(chapter.text, substitutions: substitutions)
+            let chapterText = ProsePreprocessor.preprocess(
+                chapter.text,
+                substitutions: substitutions
+            ).text
             let result = try engine.synthesize(text: chapterText, voice: voice, speed: speed)
             let duration = Double(result.samples.count) / Double(result.sampleRate)
 
@@ -317,6 +320,9 @@ struct ConvertCommand: ParsableCommand {
     private func runChapterPerFileMode(engine: YapperEngine, chapters: [Chapter], format: String) throws {
         let voices = assignVoices(engine: engine, chapterCount: chapters.count)
         let (resolvedAuthor, resolvedTitle) = resolveMetadata(chapters: chapters)
+        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+        let mergedConfig = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let substitutions = mergedConfig.speechSubstitution ?? [:]
 
         // Derive output directory from -o flag or first input's directory
         let outputDir: String
@@ -360,7 +366,11 @@ struct ConvertCommand: ParsableCommand {
 
             fputs("  [\(i + 1)/\(chapters.count)] \(filename) (\(voice.name)) ... ", stderr)
 
-            let result = try engine.synthesize(text: chapter.text, voice: voice, speed: speed)
+            let chapterText = ProsePreprocessor.preprocess(
+                chapter.text,
+                substitutions: substitutions
+            ).text
+            let result = try engine.synthesize(text: chapterText, voice: voice, speed: speed)
             let duration = Double(result.samples.count) / Double(result.sampleRate)
 
             // Write WAV
@@ -492,8 +502,8 @@ struct ConvertCommand: ParsableCommand {
             throw ValidationError("File is empty or whitespace-only: \(input)")
         }
 
-        // Clean text of residual markup from pandoc extraction, then apply substitutions
-        let cleaned = ScriptConfig.applySubstitutions(cleanMarkup(trimmed), substitutions: substitutions)
+        let preprocessed = ProsePreprocessor.preprocess(trimmed, substitutions: substitutions)
+        let cleaned = preprocessed.text
 
         let outputPath = resolveOutputPath(for: input, format: format)
         let trackTitle = URL(fileURLWithPath: input).deletingPathExtension().lastPathComponent
@@ -511,6 +521,7 @@ struct ConvertCommand: ParsableCommand {
                 print("  Track: \(trackStr)")
             }
             print("  Track title: \(trackTitle)")
+            printPreprocessingDiagnostics(preprocessed)
             print("  Text: \(cleaned)")
             return
         }
@@ -694,49 +705,21 @@ struct ConvertCommand: ParsableCommand {
             ?? engine.voiceRegistry.voices[0]
     }
 
-    // MARK: - Text cleanup
+    // MARK: - Prose preprocessing diagnostics
 
-    /// Clean residual markup from pandoc-extracted text before synthesis.
-    /// Without this, TTS reads HTML tags, markdown image syntax, and other
-    /// markup aloud. Inherited from make-audiobook's sed cleanup pipeline.
-    private func cleanMarkup(_ text: String) -> String {
-        var result = text
+    private func printPreprocessingDiagnostics(_ result: ProsePreprocessResult) {
+        guard !result.diagnostics.isEmpty || !result.sectionBreaks.isEmpty else { return }
 
-        // Strip HTML/XML tags
-        result = result.replacingOccurrences(
-            of: "<[^>]*>", with: "", options: .regularExpression)
-
-        // Strip markdown image links: ![alt](url)
-        result = result.replacingOccurrences(
-            of: #"!\[[^\]]*\]\([^)]*\)"#, with: "", options: .regularExpression)
-
-        // Strip image references: !(path)
-        result = result.replacingOccurrences(
-            of: #"!\([^)]*\)"#, with: "", options: .regularExpression)
-
-        // Convert markdown links [text](url) to just text
-        result = result.replacingOccurrences(
-            of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-
-        // Strip {class} attribute blocks
-        result = result.replacingOccurrences(
-            of: #"\{[^}]*\}"#, with: "", options: .regularExpression)
-
-        // Strip ::: directive lines
-        result = result.replacingOccurrences(
-            of: #"(?m)^:::.*$"#, with: "", options: .regularExpression)
-
-        // Strip stray backslashes
-        result = result.replacingOccurrences(of: "\\", with: "")
-
-        // Strip empty bracket pairs
-        result = result.replacingOccurrences(of: "[]", with: "")
-
-        // Collapse multiple blank lines
-        result = result.replacingOccurrences(
-            of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
-
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("  Preprocessing:")
+        if !result.sectionBreaks.isEmpty {
+            let lines = result.sectionBreaks.map { "\($0.lineIndex):\($0.pause.rawValue)" }
+                .joined(separator: ", ")
+            print("    Section breaks: \(lines)")
+        }
+        for diagnostic in result.diagnostics {
+            let line = diagnostic.lineIndex.map { " line \($0)" } ?? ""
+            print("    \(diagnostic.kind.rawValue)\(line): \(diagnostic.original) -> \(diagnostic.replacement)")
+        }
     }
 
     // MARK: - Track number extraction
