@@ -716,9 +716,12 @@ struct ConvertCommand: ParsableCommand {
                 .joined(separator: ", ")
             print("    Section breaks: \(lines)")
         }
-        for diagnostic in result.diagnostics {
-            let line = diagnostic.lineIndex.map { " line \($0)" } ?? ""
-            print("    \(diagnostic.kind.rawValue)\(line): \(diagnostic.original) -> \(diagnostic.replacement)")
+        let diagnosticsByKind = Dictionary(grouping: result.diagnostics, by: \.kind)
+        for kind in ProsePreprocessDiagnosticKind.allCases {
+            guard let diagnostics = diagnosticsByKind[kind], !diagnostics.isEmpty else { continue }
+            let lines = diagnostics.compactMap(\.lineIndex).map(String.init).joined(separator: ", ")
+            let suffix = lines.isEmpty ? "" : " on line(s) \(lines)"
+            print("    \(kind.rawValue): \(diagnostics.count) change(s)\(suffix)")
         }
     }
 

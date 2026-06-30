@@ -18,7 +18,7 @@ public struct ProseSectionBreak: Equatable, Sendable {
     }
 }
 
-public enum ProsePreprocessDiagnosticKind: String, Sendable {
+public enum ProsePreprocessDiagnosticKind: String, CaseIterable, Sendable {
     case cleanup
     case sectionBreak
     case emphasis
