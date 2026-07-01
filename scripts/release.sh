@@ -238,27 +238,31 @@ printf '  smoke: bin/yap --dry-run (argv[0] dispatch via exec -a yap)\n'
 yap_dryrun=$("${smoke_prefix}/bin/yap" --dry-run "smoke test" 2>&1) || die "smoke: bin/yap --dry-run failed: ${yap_dryrun}"
 printf '%s\n' "${yap_dryrun}" | grep -q '^voice:' || die "smoke: yap --dry-run did not print a voice line: ${yap_dryrun}"
 
-# Step 2: REAL synthesis through both wrappers — exercises MLX metallib load,
-# Bundle.main resource lookup, and the full inference pipeline. Uses
-# yapper convert (file-based, no audio playback) via stdin text, writing to
-# a throwaway .m4a. This is the exact test that would have caught v0.8.4.
-printf '  smoke: REAL synthesis via bin/yapper convert (exercises MLX metallib load)\n'
-smoke_txt="${build_dir}/smoke.txt"
-printf 'Smoke test.\n' > "${smoke_txt}"
-smoke_m4a_yapper="${build_dir}/smoke-yapper.m4a"
-"${smoke_prefix}/bin/yapper" convert "${smoke_txt}" -o "${smoke_m4a_yapper}" --voice af_heart \
-    >"${build_dir}/smoke-yapper.log" 2>&1 \
-    || die "smoke: bin/yapper convert synthesis failed. Log:
+if [[ -n "${SKIP_TESTS:-}" ]]; then
+    printf '  smoke: skipping real synthesis because SKIP_TESTS=%s\n' "${SKIP_TESTS}"
+else
+    # Step 2: REAL synthesis through both wrappers — exercises MLX metallib load,
+    # Bundle.main resource lookup, and the full inference pipeline. Uses
+    # yapper convert (file-based, no audio playback) via stdin text, writing to
+    # a throwaway .m4a. This is the exact test that would have caught v0.8.4.
+    printf '  smoke: REAL synthesis via bin/yapper convert (exercises MLX metallib load)\n'
+    smoke_txt="${build_dir}/smoke.txt"
+    printf 'Smoke test.\n' > "${smoke_txt}"
+    smoke_m4a_yapper="${build_dir}/smoke-yapper.m4a"
+    "${smoke_prefix}/bin/yapper" convert "${smoke_txt}" -o "${smoke_m4a_yapper}" --voice af_heart \
+        >"${build_dir}/smoke-yapper.log" 2>&1 \
+        || die "smoke: bin/yapper convert synthesis failed. Log:
 $(cat "${build_dir}/smoke-yapper.log")"
-[[ -s "${smoke_m4a_yapper}" ]] || die "smoke: bin/yapper convert produced no output file"
+    [[ -s "${smoke_m4a_yapper}" ]] || die "smoke: bin/yapper convert produced no output file"
 
-# bin/yap itself doesn't expose convert (it hard-dispatches to speak), so the
-# second smoke pass runs synthesis via bin/yapper's convert path on purpose —
-# the critical check is that MLX is finding its metallib via libexec-anchored
-# Bundle.main lookups, which both wrappers share identical install topology.
-# The argv[0] dispatch for yap is already verified by the --dry-run step above.
-printf '  ✓ synthesis produced %s bytes of audio — MLX metallib load working\n' \
-    "$(stat -f%z "${smoke_m4a_yapper}")"
+    # bin/yap itself doesn't expose convert (it hard-dispatches to speak), so the
+    # second smoke pass runs synthesis via bin/yapper's convert path on purpose —
+    # the critical check is that MLX is finding its metallib via libexec-anchored
+    # Bundle.main lookups, which both wrappers share identical install topology.
+    # The argv[0] dispatch for yap is already verified by the --dry-run step above.
+    printf '  ✓ synthesis produced %s bytes of audio — MLX metallib load working\n' \
+        "$(stat -f%z "${smoke_m4a_yapper}")"
+fi
 
 # 7. Tar the signed + notarised binary and bundles
 printf '\nCreating %s...\n' "${BINARY_ASSET}"

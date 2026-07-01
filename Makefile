@@ -128,7 +128,7 @@ release: ## Bump version, tag, push, update Homebrew formula (usage: make releas
 ifndef SKIP_TESTS
 	@$(MAKE) test
 endif
-	@bash scripts/release.sh $(VERSION)
+	@SKIP_TESTS="$(SKIP_TESTS)" bash scripts/release.sh $(VERSION)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

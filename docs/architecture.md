@@ -434,7 +434,7 @@ Must be installed once: `xcodebuild -downloadComponent MetalToolchain`
 5. Developer ID codesign (inside-out: bundles first, then binary) with hardened runtime + secure timestamp
 6. Submit to Apple notary service, wait for `status: Accepted`
 7. Run `scripts/verify-signature.sh` as pre-upload gate
-8. Runtime synthesis smoke test through staged wrapper scripts (catches install-topology bugs)
+8. Runtime wrapper smoke test through staged wrapper scripts; real synthesis is skipped when `SKIP_TESTS=1`
 9. Tar and upload binary asset to the GitHub release
 10. Post-upload: re-download and re-verify the uploaded asset
 11. Rewrite `Formula/yapper.rb` with fresh SHA256 and version
