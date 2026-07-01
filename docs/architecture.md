@@ -328,9 +328,10 @@ yapper/
 │           └── Defaults.swift        # Model/voice path resolution
 ├── Tests/
 │   ├── regression/
-│   │   ├── YapperKitTests/           # Swift framework tests (88 tests)
-│   │   └── cli/                      # Bash CLI tests (80 tests)
+│   │   ├── YapperKitTests/           # Swift framework tests
+│   │   └── cli/                      # Fast smoke + audio/playback CLI tests
 │   │       ├── harness.sh
+│   │       ├── test_release_cli.sh   # release-safe dry-run/listing smoke
 │   │       ├── test_speak.sh         # RT-4.x, RT-15.x
 │   │       ├── test_voices.sh        # RT-5.x
 │   │       ├── test_convert.sh       # RT-6.x
@@ -357,12 +358,14 @@ yapper/
 |---|---|
 | `make build` | `xcodebuild build` + MisakiSwift bundle copy |
 | `make test` | `make test-framework` + `make test-cli` |
-| `make test-framework` | lint + xcodebuild Swift framework tests (88 tests) |
-| `make test-cli` | build + bash CLI tests invoking the real binary (80 tests) |
+| `make test-framework` | lint + xcodebuild Swift framework tests |
+| `make test-cli` | build + fast, release-safe CLI smoke tests |
+| `make test-audio` | build + audio/playback CLI regression tests |
+| `make test-all` | release-safe tests plus audio/playback CLI regression tests |
 | `make install` | Wrapper scripts to `~/.local/bin/yapper` and `~/.local/bin/yap` |
 | `make sync` | Git sync: submodules first (if present), then parent repo |
 | `make release` | Run tests, build, sign, notarise, tag, push, update Homebrew formula |
-| `make release SKIP_TESTS=1` | Same but skip the regression pack |
+| `make release SKIP_TESTS=1` | Same but skip release-safe tests |
 | `make release-models` | Package and upload model weights + voices to models-v1 release |
 
 ### Install topology
@@ -374,7 +377,8 @@ The `yap` wrapper uses `exec -a yap` to set `argv[0]="yap"` while executing the 
 ### Test architecture
 
 - **Swift framework tests** (`Tests/regression/YapperKitTests/`): in-process tests of YapperKit library types (engine, inference, voice registry, text chunker, audio, epub parser, document converter). Run via xcodebuild.
-- **Bash CLI tests** (`Tests/regression/cli/`): invoke the built `yapper` binary as a subprocess from bash scripts. Test the same entry point end users use. Check exit codes, stdout, stderr, output files, metadata tags via ffprobe. Includes real MLX synthesis tests that catch install-topology bugs.
+- **Release-safe CLI smoke tests** (`Tests/regression/cli/test_release_cli.sh`): fast dry-run/listing checks used by `make test` and therefore by `make release`.
+- **Audio/playback CLI tests** (`Tests/regression/cli/test_*.sh`, excluding `test_release_cli.sh`): invoke the built `yapper` binary as a subprocess from bash scripts. Test the same entry point end users use. Check exit codes, stdout, stderr, output files, metadata tags via ffprobe. Includes real MLX synthesis tests that catch install-topology bugs. Run with `make test-audio` or as part of `make test-all`, not as part of release-safe `make test`.
 - **One-off tests** (`Tests/one_off/`): per-issue verification tests. Not part of the regression pack. May have side effects (audio playback, recursion risk, external dependencies).
 
 ### MisakiSwift resource bundle workaround
@@ -423,17 +427,18 @@ Must be installed once: `xcodebuild -downloadComponent MetalToolchain`
 
 ### Release pipeline (`make release`)
 
-1. Run regression tests (unless `SKIP_TESTS=1`)
-2. Bump version in `Sources/YapperKit/Version.swift`
-3. Build release binary via xcodebuild
-4. Developer ID codesign (inside-out: bundles first, then binary) with hardened runtime + secure timestamp
-5. Submit to Apple notary service, wait for `status: Accepted`
-6. Run `scripts/verify-signature.sh` as pre-upload gate
-7. Runtime synthesis smoke test through staged wrapper scripts (catches install-topology bugs)
-8. Tar and upload binary asset to the GitHub release
-9. Post-upload: re-download and re-verify the uploaded asset
-10. Rewrite `Formula/yapper.rb` with fresh SHA256 and version
-11. Push formula to `tigger04/homebrew-tap`
+1. Run release-safe tests (unless `SKIP_TESTS=1`)
+2. Select a release version. All project `make release` behaviour must treat tag uniqueness as a prerequisite: automatic patch bumps must skip any tag that already exists locally or on `origin`; explicit `VERSION=` values fail fast if their tag already exists.
+3. Bump version in `Sources/YapperKit/Version.swift`
+4. Build release binary via xcodebuild
+5. Developer ID codesign (inside-out: bundles first, then binary) with hardened runtime + secure timestamp
+6. Submit to Apple notary service, wait for `status: Accepted`
+7. Run `scripts/verify-signature.sh` as pre-upload gate
+8. Runtime synthesis smoke test through staged wrapper scripts (catches install-topology bugs)
+9. Tar and upload binary asset to the GitHub release
+10. Post-upload: re-download and re-verify the uploaded asset
+11. Rewrite `Formula/yapper.rb` with fresh SHA256 and version
+12. Push formula to `tigger04/homebrew-tap`
 
 ### Signing and notarisation
 

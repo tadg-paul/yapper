@@ -73,13 +73,28 @@ bump_version() {
     printf '%s.%s.%s' "${major}" "${minor}" "${patch}"
 }
 
+tag_exists() {
+    local tag="$1"
+    git -C "${PROJECT_ROOT}" rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null \
+        || git -C "${PROJECT_ROOT}" ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1
+}
+
+next_available_patch_version() {
+    local version
+    version=$(bump_version "$1")
+    while tag_exists "v${version}"; do
+        version=$(bump_version "${version}")
+    done
+    printf '%s' "${version}"
+}
+
 CURRENT_VERSION=$(get_current_version)
 [[ -n "${CURRENT_VERSION}" ]] || die "Could not parse current version from ${VERSION_FILE}"
 
 if [[ $# -gt 0 && -n "${1:-}" ]]; then
     NEW_VERSION="$1"
 else
-    NEW_VERSION=$(bump_version "${CURRENT_VERSION}")
+    NEW_VERSION=$(next_available_patch_version "${CURRENT_VERSION}")
 fi
 
 TAG="v${NEW_VERSION}"
@@ -93,8 +108,8 @@ printf '  Tag:             %s\n\n' "${TAG}"
 # Sanity checks
 git -C "${PROJECT_ROOT}" diff --quiet || die "Working tree has uncommitted changes. Commit or stash first."
 git -C "${PROJECT_ROOT}" diff --cached --quiet || die "Index has staged changes. Commit or reset first."
-if git -C "${PROJECT_ROOT}" rev-parse "${TAG}" >/dev/null 2>&1; then
-    die "Tag ${TAG} already exists."
+if tag_exists "${TAG}"; then
+    die "Tag ${TAG} already exists locally or on origin."
 fi
 [[ -f "${MANIFEST}" ]] || die "models/manifest.json not found. Run 'make release-models' first."
 
