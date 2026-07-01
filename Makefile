@@ -4,7 +4,7 @@
 # xcodebuild is required (not swift build) because MLX Swift needs
 # Metal shader compilation, which only Xcode's build system supports.
 
-.PHONY: build test test-framework test-cli test-one-off lint install uninstall clean help release release-models sync
+.PHONY: build test test-framework test-cli test-audio test-all test-one-off lint install uninstall clean help release release-models sync
 
 SCHEME := yapper-Package
 DESTINATION := platform=OS X
@@ -25,7 +25,7 @@ lint: ## Run linter
 		echo "swiftlint not found, skipping lint"; \
 	fi
 
-test: test-framework test-cli ## Run all regression tests
+test: test-framework test-cli ## Run release-safe regression tests
 
 test-framework: lint ## Run framework tests only
 	@xcodebuild build-for-testing -scheme $(SCHEME) -destination '$(DESTINATION)' -quiet
@@ -46,7 +46,10 @@ test-framework: lint ## Run framework tests only
 		grep -v "may cause spurious" | \
 		grep -v "^$$"
 
-test-cli: build ## Run CLI command tests (bash, invokes the built binary)
+test-cli: build ## Run release-safe CLI command tests
+	@bash Tests/regression/cli/test_release_cli.sh
+
+test-audio: build ## Run audio/playback CLI regression tests
 	@bash Tests/regression/cli/test_speak.sh
 	@bash Tests/regression/cli/test_voices.sh
 	@bash Tests/regression/cli/test_convert.sh
@@ -58,6 +61,8 @@ test-cli: build ## Run CLI command tests (bash, invokes the built binary)
 	@bash Tests/regression/cli/test_fountain.sh
 	@bash Tests/regression/cli/test_pronunciation.sh
 	@bash Tests/regression/cli/test_yap.sh
+
+test-all: test-framework test-cli test-audio ## Run release-safe and audio regression tests
 
 test-one-off: lint ## Run one-off tests (not part of regression)
 	@xcodebuild build-for-testing -scheme $(SCHEME) -destination '$(DESTINATION)' -quiet
