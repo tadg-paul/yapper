@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for pronunciation config cascade and speech-substitution (issue #27).
+# ABOUTME: One-off tests for pronunciation config cascade and speech-substitution (issue #27).
 # ABOUTME: Tests global/project/CLI config loading, merging, and substitution in all modes.
 
 set -euo pipefail

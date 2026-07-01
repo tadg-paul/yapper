@@ -4,7 +4,7 @@
 # xcodebuild is required (not swift build) because MLX Swift needs
 # Metal shader compilation, which only Xcode's build system supports.
 
-.PHONY: build test test-framework test-cli test-audio test-all test-one-off lint install uninstall clean help release release-models sync
+.PHONY: build test test-framework test-cli test-audio test-all test-one-off test-one-off-swift test-one-off-cli lint install uninstall clean help release release-models sync
 
 SCHEME := yapper-Package
 DESTINATION := platform=OS X
@@ -35,11 +35,6 @@ test-framework: lint ## Run framework tests only
 	@xcodebuild test-without-building -scheme $(SCHEME) -destination '$(DESTINATION)' \
 		-only-testing:YapperKitTests \
 		-parallel-testing-enabled NO \
-		-skip-testing:YapperKitTests/SpeakCommandTests \
-		-skip-testing:YapperKitTests/VoicesCommandTests \
-		-skip-testing:YapperKitTests/ConvertCommandTests \
-		-skip-testing:YapperKitTests/VoiceSelectionPrecedenceTests \
-		-skip-testing:YapperKitTests/YapShortcutTests \
 		2>&1 | \
 		grep -v "^objc\[" | \
 		grep -v "duplicates must be" | \
@@ -49,22 +44,13 @@ test-framework: lint ## Run framework tests only
 test-cli: build ## Run release-safe CLI command tests
 	@bash Tests/regression/cli/test_release_cli.sh
 
-test-audio: build ## Run audio/playback CLI regression tests
-	@bash Tests/regression/cli/test_speak.sh
-	@bash Tests/regression/cli/test_voices.sh
-	@bash Tests/regression/cli/test_convert.sh
-	@bash Tests/regression/cli/test_convert_delta.sh
-	@bash Tests/regression/cli/test_progress.sh
-	@bash Tests/regression/cli/test_script.sh
-	@bash Tests/regression/cli/test_concurrent_convert.sh
-	@bash Tests/regression/cli/test_preamble.sh
-	@bash Tests/regression/cli/test_fountain.sh
-	@bash Tests/regression/cli/test_pronunciation.sh
-	@bash Tests/regression/cli/test_yap.sh
+test-audio: test-one-off-cli ## Alias for audio/playback one-off CLI tests
 
-test-all: test-framework test-cli test-audio ## Run release-safe and audio regression tests
+test-all: test test-one-off ## Run release-safe and one-off tests
 
-test-one-off: lint ## Run one-off tests (not part of regression)
+test-one-off: test-one-off-swift test-one-off-cli ## Run one-off tests (not part of regression)
+
+test-one-off-swift: lint ## Run Swift one-off tests (real synthesis/integration)
 	@xcodebuild build-for-testing -scheme $(SCHEME) -destination '$(DESTINATION)' -quiet
 	@cp -R $(DERIVED_DATA)/yapper-*/Build/Products/Debug/MisakiSwift_MisakiSwift.bundle \
 		$(DERIVED_DATA)/yapper-*/Build/Products/Debug/PackageFrameworks/MisakiSwift.framework/Versions/A/Resources/ \
@@ -77,6 +63,19 @@ test-one-off: lint ## Run one-off tests (not part of regression)
 		grep -v "duplicates must be" | \
 		grep -v "may cause spurious" | \
 		grep -v "^$$"
+
+test-one-off-cli: build ## Run CLI one-off tests (real synthesis/playback)
+	@bash Tests/one_off/cli/test_speak.sh
+	@bash Tests/one_off/cli/test_voices.sh
+	@bash Tests/one_off/cli/test_convert.sh
+	@bash Tests/one_off/cli/test_convert_delta.sh
+	@bash Tests/one_off/cli/test_progress.sh
+	@bash Tests/one_off/cli/test_script.sh
+	@bash Tests/one_off/cli/test_concurrent_convert.sh
+	@bash Tests/one_off/cli/test_preamble.sh
+	@bash Tests/one_off/cli/test_fountain.sh
+	@bash Tests/one_off/cli/test_pronunciation.sh
+	@bash Tests/one_off/cli/test_yap.sh
 
 install: build ## Install yapper (and yap shortcut) to ~/.local/bin
 	$(eval PRODDIR := $(shell find $(DERIVED_DATA)/yapper-*/Build/Products/Debug -name yapper -type f 2>/dev/null | head -1 | xargs dirname))

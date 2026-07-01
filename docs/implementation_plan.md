@@ -17,7 +17,7 @@ All Phase 1 work is complete.
 - `xcodebuild` required for Metal shader compilation (not `swift build`)
 - VoiceRegistry loads individual `.safetensors` voice files (v1.0 format, not `.npz`)
 - Makefile with build, test, install, uninstall targets
-- 13 regression tests
+- 13 automated tests
 
 ### [Issue #2](https://github.com/tigger04/yapper/issues/2) - Inference engine + text chunking + live playback ✅
 
@@ -27,7 +27,7 @@ All Phase 1 work is complete.
 - AudioPlayer: AVAudioEngine streaming with pause/resume/stop
 - Word-level timestamps from predicted phoneme durations
 - Speed control (0.5x-2.0x)
-- 19 regression tests
+- 19 automated tests
 
 ### [Issue #3](https://github.com/tigger04/yapper/issues/3) - Audio wobble fix ✅
 
@@ -35,7 +35,7 @@ All Phase 1 work is complete.
 - Intermediate tensors now numerically identical to KokoroSwift at every stage
 - Mel-spectrogram comparison infrastructure for regression guarding
 - A/B comparison tests against kokoro-tts
-- 7 regression tests
+- 7 automated tests
 
 ## Phase 2: CLI - Core Commands ✅ (v0.4.0-v0.7.0)
 
@@ -48,13 +48,13 @@ All Phase 2 work is complete.
 - `yapper speak < file.txt` - speak from file redirect
 - `--voice NAME` and `--speed FLOAT` flags
 - Playback via afplay (temp WAV)
-- 14 regression tests
+- 14 automated tests
 
 ### [Issue #5](https://github.com/tigger04/yapper/issues/5) - `yapper voices` command ✅
 
 - `yapper voices` - list all voices with name, accent, gender
 - `yapper voices --preview NAME` - speak a sample sentence with the named voice
-- 8 regression tests
+- 8 automated tests
 
 ### [Issue #6](https://github.com/tigger04/yapper/issues/6) - Plain text to audio file ✅
 
@@ -63,7 +63,7 @@ All Phase 2 work is complete.
 - ID3 tags: `--author`, `--title` flags
 - Existing output files backed up (.bak, .1.bak, .2.bak)
 - Multiple input files, `--dry-run`, non-UTF-8/empty rejection
-- 25 regression tests
+- 25 automated tests
 
 ### [Issue #7](https://github.com/tigger04/yapper/issues/7) - Epub parsing and chapter detection ✅
 
@@ -71,14 +71,14 @@ All Phase 2 work is complete.
 - Epub 2 and epub 3 support
 - HTML stripping, entity decoding, metadata extraction
 - Edge cases: no-TOC, missing metadata, invalid ZIP, zero-byte
-- 21 regression tests
+- 21 automated tests
 
 ### [Issue #8](https://github.com/tigger04/yapper/issues/8) - Document conversion pipeline ✅
 
 - PDF (pdftotext), docx/odt (pandoc), md/html (h1 splitting), txt (ALL CAPS heuristics), mobi (ebook-convert)
 - Case-insensitive extension dispatch, YAML frontmatter stripping
 - Missing tool errors with install hints
-- 18 regression tests
+- 18 automated tests
 
 ### [Issue #9](https://github.com/tigger04/yapper/issues/9) - Audiobook generation ✅
 
@@ -87,9 +87,9 @@ All Phase 2 work is complete.
 - Track numbers from chapter order or filename digits
 - Interactive metadata prompts (TTY-aware)
 - Validated: chapter markers display in Apple Books
-- 14 regression tests
+- 14 automated tests
 
-**Total at v0.7.0: ~110 regression tests**
+**Total at v0.7.0: ~110 automated tests**
 
 ## Packaging and distribution (v0.8.0-v0.8.6)
 
@@ -134,7 +134,7 @@ All Phase 2 work is complete.
 
 - `standardInput = FileHandle.nullDevice` on all ffmpeg subprocess calls
 
-**Total at v0.8.6: 168 regression tests (88 Swift framework + 80 bash CLI)**
+**Total at v0.8.6: 168 automated tests (88 Swift framework + 80 bash CLI before the later release-safe/one-off split)**
 
 ## In progress
 

@@ -124,8 +124,8 @@ The inference pipeline implements the full Kokoro-82M architecture (StyleTTS2-ba
 |---|---|
 | `make build` | Build via xcodebuild |
 | `make test` | Run release-safe tests: Swift framework tests plus fast CLI smoke |
-| `make test-audio` | Run audio/playback CLI regression tests |
-| `make test-all` | Run release-safe and audio regression tests |
+| `make test-audio` | Alias for audio/playback one-off CLI tests |
+| `make test-all` | Run release-safe and one-off tests |
 | `make install` | Install yapper and yap to ~/.local/bin |
 | `make release` | Release-safe tests, version bump, sign, notarise, tag, push, update Homebrew |
 

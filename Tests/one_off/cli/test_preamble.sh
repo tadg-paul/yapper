@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for preamble rendering, footnotes, and metadata flow (issue #24).
+# ABOUTME: One-off tests for preamble rendering, footnotes, and metadata flow (issue #24).
 # ABOUTME: Tests intro chapter synthesis, footnote narrator asides, and title/author pre-population.
 
 set -euo pipefail

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for `yapper convert` (issue #6).
+# ABOUTME: One-off tests for `yapper convert` (issue #6).
 # ABOUTME: Each test invokes the built yapper binary exactly as a user would.
 
 set -euo pipefail

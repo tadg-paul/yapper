@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for concurrent synthesis, configurable gaps/speed, stage direction names (issue #25).
+# ABOUTME: One-off tests for concurrent synthesis, configurable gaps/speed, stage direction names (issue #25).
 # ABOUTME: Tests multi-process worker pattern, YAML config for gaps/speed/threads, and Title Case conversion.
 
 set -euo pipefail

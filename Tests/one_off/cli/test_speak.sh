@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for `yapper speak` (issue #4) and voice selection (issue #15).
+# ABOUTME: One-off tests for `yapper speak` (issue #4) and voice selection (issue #15).
 # ABOUTME: Each test invokes the built yapper binary exactly as a user would.
 
 set -euo pipefail

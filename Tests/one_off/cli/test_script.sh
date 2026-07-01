@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for script reading with per-character voices (issue #23).
+# ABOUTME: One-off tests for script reading with per-character voices (issue #23).
 # ABOUTME: Tests markdown and org-mode script parsing, voice assignment, config, M4B output.
 
 set -euo pipefail

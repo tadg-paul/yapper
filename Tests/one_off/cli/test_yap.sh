@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for `yap` shorthand command (issue #14).
+# ABOUTME: One-off tests for `yap` shorthand command (issue #14).
 # ABOUTME: Each test invokes the built yapper binary via its yap argv[0] dispatch.
 
 set -euo pipefail

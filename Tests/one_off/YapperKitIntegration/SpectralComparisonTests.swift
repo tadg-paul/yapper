@@ -1,4 +1,4 @@
-// ABOUTME: Spectral regression guard for audio quality.
+// ABOUTME: Spectral one-off guard for audio quality.
 // ABOUTME: Covers RT-3.5 through RT-3.7.
 
 import Testing
@@ -7,7 +7,7 @@ import AVFoundation
 @testable import YapperKit
 
 @Suite(.serialized)
-struct SpectralRegressionTests {
+struct SpectralComparisonTests {
 
     private static let modelPath = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".local/share/yapper/models/kokoro-v1_0.safetensors")

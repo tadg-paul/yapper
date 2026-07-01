@@ -279,7 +279,7 @@ struct HomebrewFormulaTests {
 //   every one of these tests while shipping a broken install topology.
 //
 // Replacement tests: RT-14.1, RT-14.2, RT-14.3 in
-// Tests/regression/YapperKitTests/YapShortcutTests.swift, which invoke the
+// Tests/one_off/YapperKitIntegration/YapShortcutTests.swift, which invoke the
 // real bin/yap wrapper via YapperProcessHarness — the same harness as the
 // rewritten RT-15.x suite.
 //

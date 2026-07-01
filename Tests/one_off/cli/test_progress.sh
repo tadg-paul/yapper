@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for progress indicator (issue #18).
+# ABOUTME: One-off tests for progress indicator (issue #18).
 # ABOUTME: Tests progress bar, text display, --quiet suppression, stderr-only output.
 
 set -euo pipefail

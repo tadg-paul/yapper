@@ -1,4 +1,4 @@
-// ABOUTME: Regression tests for the yap shorthand command (issue #14).
+// ABOUTME: One-off tests for the yap shorthand command (issue #14).
 // ABOUTME: Invokes bin/yap via YapperProcessHarness to exercise the real install wrapper and argv[0] dispatch.
 
 import Testing

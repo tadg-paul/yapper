@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for Fountain screenplay format parsing (issue #26).
+# ABOUTME: One-off tests for Fountain screenplay format parsing (issue #26).
 # ABOUTME: Tests scene headings, character extraction, dialogue, action, transitions, notes.
 
 set -euo pipefail

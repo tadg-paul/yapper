@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Shared test harness for bash CLI regression tests.
+# ABOUTME: Shared test harness for bash CLI tests.
 # ABOUTME: Discovers the built yapper binary and provides pass/fail reporting.
 
 set -euo pipefail

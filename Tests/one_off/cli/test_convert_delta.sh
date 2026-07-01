@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Regression tests for make-audiobook delta features (issue #20).
+# ABOUTME: One-off tests for make-audiobook delta features (issue #20).
 # ABOUTME: Metadata on all formats, track numbers, text cleanup, batch summary, --non-interactive.
 
 set -euo pipefail
