@@ -69,6 +69,19 @@ struct ProsePreprocessorTests {
         #expect(result.text == "Say \"Kawch\" and \"[taoiseach](/tiːʃəx/)\".")
     }
 
+    @Test("RT-36.1: custom pronunciation substitutions are case-insensitive")
+    func substitutionsAreCaseInsensitive() {
+        let result = ProsePreprocessor.preprocess(
+            "The jacket, Jacket, and JACKET. The Taoiseach and TAOISEACH.",
+            substitutions: [
+                "jacket": "coat",
+                "taoiseach": "/tiːʃəx/"
+            ]
+        )
+
+        #expect(result.text == "The coat, coat, and coat. The [Taoiseach](/tiːʃəx/) and [TAOISEACH](/tiːʃəx/).")
+    }
+
     @Test("RT-34.12 through RT-34.14: section pause is distinct from paragraph break")
     func sectionPauseMetadataIsDistinctFromParagraphBreaks() {
         let result = ProsePreprocessor.preprocess("One.\n\nTwo.\n\n___\n\nThree.")

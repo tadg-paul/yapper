@@ -37,6 +37,8 @@ Applied to all text before synthesis, in all modes.
 
 **IPA values** are wrapped in `/slashes/`. Yapper automatically converts these to the inline IPA format the G2P engine expects (`[word](/phonemes/)`). Plain text replacements are applied directly.
 
+Substitution keys are matched case-insensitively, so one entry covers lowercase, capitalized, and uppercase occurrences in source text.
+
 For inline IPA in source text (without config), use the bracket syntax directly: `[word](/phonemes/)`.
 
 ### Voice assignment (script mode)

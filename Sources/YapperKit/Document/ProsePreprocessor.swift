@@ -305,24 +305,50 @@ public enum ProsePreprocessor {
         var result = text
 
         for (find, replace) in substitutions {
-            let replacement: String
-            if replace.count > 2 && replace.hasPrefix("/") && replace.hasSuffix("/") {
-                replacement = "[\(find)](\(replace))"
-            } else {
-                replacement = replace
+            guard !find.isEmpty else { continue }
+            var didReplace = false
+            var lastReplacement = ""
+            var searchStart = result.startIndex
+
+            while searchStart < result.endIndex,
+                  let range = result.range(
+                    of: find,
+                    options: [.caseInsensitive],
+                    range: searchStart..<result.endIndex
+                  ) {
+                let matched = String(result[range])
+                let replacement = substitutionReplacement(
+                    find: find,
+                    replace: replace,
+                    matched: matched
+                )
+                result.replaceSubrange(range, with: replacement)
+                didReplace = true
+                lastReplacement = replacement
+                searchStart = result.index(range.lowerBound, offsetBy: replacement.count)
             }
-            let previous = result
-            result = result.replacingOccurrences(of: find, with: replacement)
-            if result != previous {
+
+            if didReplace {
                 diagnostics.append(ProsePreprocessDiagnostic(
                     kind: .substitution,
                     original: find,
-                    replacement: replacement
+                    replacement: lastReplacement
                 ))
             }
         }
 
         return result
+    }
+
+    private static func substitutionReplacement(
+        find: String,
+        replace: String,
+        matched: String
+    ) -> String {
+        if replace.count > 2 && replace.hasPrefix("/") && replace.hasSuffix("/") {
+            return "[\(matched.isEmpty ? find : matched)](\(replace))"
+        }
+        return replace
     }
 }
 
