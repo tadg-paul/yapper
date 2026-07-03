@@ -10,7 +10,10 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION_FILE="${PROJECT_ROOT}/Sources/YapperKit/Version.swift"
 FORMULA_LOCAL="${PROJECT_ROOT}/Formula/yapper.rb"
 MANIFEST="${PROJECT_ROOT}/models/manifest.json"
-TAP_REPO="tigger04/homebrew-tap"
+# Use the canonical repository name. GitHub read requests may redirect from the
+# old tigger04 owner, but release writes through gh api fail with HTTP 307.
+TAP_REPO="tadg-paul/homebrew-tap"
+TAP_BRANCH="master"
 FORMULA_TAP_PATH="Formula/yapper.rb"
 SCHEME="yapper"
 NOTARY_PROFILE="yapper-notary"
@@ -418,16 +421,16 @@ payload_file=$(mktemp)
 base64 < "${FORMULA_LOCAL}" | tr -d '\n' > "${b64_file}"
 
 existing_sha=""
-if gh api "repos/${TAP_REPO}/contents/${FORMULA_TAP_PATH}" >/dev/null 2>&1; then
-    existing_sha=$(gh api "repos/${TAP_REPO}/contents/${FORMULA_TAP_PATH}" --jq '.sha')
+if gh api "repos/${TAP_REPO}/contents/${FORMULA_TAP_PATH}?ref=${TAP_BRANCH}" >/dev/null 2>&1; then
+    existing_sha=$(gh api "repos/${TAP_REPO}/contents/${FORMULA_TAP_PATH}?ref=${TAP_BRANCH}" --jq '.sha')
 fi
 
-python3 - "${b64_file}" "${payload_file}" "${NEW_VERSION}" "${existing_sha}" <<'PY'
+python3 - "${b64_file}" "${payload_file}" "${NEW_VERSION}" "${existing_sha}" "${TAP_BRANCH}" <<'PY'
 import json, sys
-b64_path, payload_path, version, sha = sys.argv[1:5]
+b64_path, payload_path, version, sha, branch = sys.argv[1:6]
 with open(b64_path) as fh:
     content = fh.read().strip()
-payload = {"message": f"Update yapper to {version}", "content": content}
+payload = {"message": f"Update yapper to {version}", "content": content, "branch": branch}
 if sha:
     payload["sha"] = sha
 with open(payload_path, "w") as fh:
@@ -438,6 +441,30 @@ gh api "repos/${TAP_REPO}/contents/${FORMULA_TAP_PATH}" \
     --method PUT --input "${payload_file}" >/dev/null
 
 rm -f -- "${b64_file}" "${payload_file}"
+
+printf 'Verifying tap formula update...\n'
+python3 - "${TAP_REPO}" "${TAP_BRANCH}" "${FORMULA_TAP_PATH}" "${NEW_VERSION}" "${BINARY_URL}" "${BINARY_SHA256}" <<'PY'
+import base64
+import json
+import subprocess
+import sys
+
+repo, branch, path, version, url, sha256 = sys.argv[1:7]
+payload = subprocess.check_output(
+    ["gh", "api", f"repos/{repo}/contents/{path}?ref={branch}"],
+    text=True,
+)
+formula = base64.b64decode(json.loads(payload)["content"]).decode()
+checks = {
+    f'version "{version}"': "version",
+    f'url "{url}"': "binary URL",
+    f'sha256 "{sha256}"': "binary SHA256",
+    f'assert_match "{version}"': "formula test version",
+}
+missing = [label for needle, label in checks.items() if needle not in formula]
+if missing:
+    raise SystemExit("tap formula did not update expected fields: " + ", ".join(missing))
+PY
 
 printf '\n=== Release Complete ===\n'
 printf '  Version: %s\n' "${NEW_VERSION}"
