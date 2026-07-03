@@ -122,6 +122,7 @@ The inference pipeline implements the full Kokoro-82M architecture (StyleTTS2-ba
 
 | Target | Description |
 |---|---|
+| `make dev-prereqs` | Install/check required Xcode developer components |
 | `make build` | Build via xcodebuild |
 | `make test` | Run release-safe tests: Swift framework tests plus fast CLI smoke |
 | `make test-audio` | Alias for audio/playback one-off CLI tests |

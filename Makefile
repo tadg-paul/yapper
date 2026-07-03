@@ -4,14 +4,29 @@
 # xcodebuild is required (not swift build) because MLX Swift needs
 # Metal shader compilation, which only Xcode's build system supports.
 
-.PHONY: build test test-framework test-cli test-audio test-all test-one-off test-one-off-swift test-one-off-cli lint install uninstall clean help release release-models sync
+.PHONY: dev-prereqs build test test-framework test-cli test-audio test-all test-one-off test-one-off-swift test-one-off-cli lint install uninstall clean help release release-models sync
 
 SCHEME := yapper-Package
 DESTINATION := platform=OS X
 INSTALL_DIR := $(HOME)/.local/bin
 DERIVED_DATA := $(HOME)/Library/Developer/Xcode/DerivedData
 
-build: ## Build the project
+dev-prereqs: ## Install required Xcode developer components when absent
+	@command -v xcodebuild >/dev/null 2>&1 || { echo "Error: xcodebuild is required. Install Xcode first."; exit 1; }
+	@if ! xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then \
+		echo "Running Xcode first-launch setup..."; \
+		if [ "$$(id -u)" -eq 0 ]; then \
+			xcodebuild -runFirstLaunch; \
+		else \
+			sudo xcodebuild -runFirstLaunch; \
+		fi; \
+	fi
+	@if ! xcrun --find metal >/dev/null 2>&1; then \
+		echo "Installing Xcode Metal Toolchain..."; \
+		xcodebuild -downloadComponent MetalToolchain; \
+	fi
+
+build: dev-prereqs ## Build the project
 	xcodebuild build -scheme yapper -destination '$(DESTINATION)' -quiet
 	@# Copy MisakiSwift resource bundle into its framework (needed for CLI and tests)
 	@cp -R $(DERIVED_DATA)/yapper-*/Build/Products/Debug/MisakiSwift_MisakiSwift.bundle \

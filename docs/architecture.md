@@ -353,7 +353,8 @@ yapper/
 
 | Target | What it does |
 |---|---|
-| `make build` | `xcodebuild build` + MisakiSwift bundle copy |
+| `make dev-prereqs` | Check/run Xcode first-launch setup and install the Metal Toolchain when absent |
+| `make build` | `make dev-prereqs` + `xcodebuild build` + MisakiSwift bundle copy |
 | `make test` | `make test-framework` + `make test-cli` |
 | `make test-framework` | lint + release-safe xcodebuild Swift framework tests |
 | `make test-cli` | build + fast, release-safe CLI smoke tests |
