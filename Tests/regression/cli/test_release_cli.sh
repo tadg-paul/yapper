@@ -63,6 +63,42 @@ test_release_convert_hyphen_preprocessing() {
 }
 run_test "RT-39.4" "convert dry-run normalizes intra-word hyphens" test_release_convert_hyphen_preprocessing
 
+test_release_convert_chunk_diagnostics() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/paragraphs.md"
+    printf 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.' > "${input}"
+    output=$("${YAPPER}" convert "${input}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Chunks: 1 (policy: natural-prose)' || return 1
+    printf '%s' "${output}" | grep -q 'Chunk 1: boundary=none, paragraphs=yes' || return 1
+}
+run_test "RT-40.7" "convert dry-run exposes natural prose chunk diagnostics" test_release_convert_chunk_diagnostics
+
+test_release_script_dry_run_structure() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/script.md"
+    cat > "${input}" <<'EOF'
+# Test Script
+
+## Scene One
+
+ALICE
+Hello there.
+
+BOB
+General Kenobi.
+
+A door closes.
+EOF
+    output=$("${YAPPER}" convert "${input}" --script --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Script mode: Test Script' || return 1
+    printf '%s' "${output}" | grep -q 'ALICE' || return 1
+    printf '%s' "${output}" | grep -q 'BOB' || return 1
+    printf '%s' "${output}" | grep -q '\\[stage\\]' || return 1
+}
+run_test "RT-40.4" "script dry-run keeps character and stage structure" test_release_script_dry_run_structure
+
 test_release_invalid_voice() {
     local output
     if output=$("${YAPPER}" speak --voice nonexistent_voice --dry-run "hello" 2>&1); then
