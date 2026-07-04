@@ -110,7 +110,7 @@ The inference pipeline implements the full Kokoro-82M architecture (StyleTTS2-ba
 - Speech substitution and inline IPA pronunciation
 - Stage direction character names automatically Title Cased
 - Per-line audio trimming (Whisper-based or heuristic)
-- Sentence-level text chunking for arbitrarily long input
+- Policy-based text chunking for arbitrarily long input
 - Speed control (0.5x-2.0x) and word-level timestamps
 - `--dry-run`, `--non-interactive`, `--quiet` flags
 - Numerically identical output to [KokoroSwift](https://github.com/mlalma/kokoro-ios)

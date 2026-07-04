@@ -78,8 +78,10 @@ To achieve perceived real-time playback:
 
 1. Split input text at sentence boundaries (using `NLTokenizer` with `.sentence` unit)
 2. Greedily batch consecutive sentences into chunks that fit within the 510-token budget
-3. For live playback: generate each chunk, push PCM to `AVAudioEngine` immediately, start generating the next chunk while the current one plays
-4. For file output: generate all chunks sequentially, concatenate PCM buffers
+3. In natural prose mode, treat blank-line paragraph breaks as soft pacing markers rather than mandatory synthesis boundaries
+4. In paragraph-bounded mode, preserve blank-line boundaries for script-like synthesis where structural separation matters
+5. For live playback: generate each chunk, push PCM to `AVAudioEngine` immediately, start generating the next chunk while the current one plays
+6. For file output: generate all chunks sequentially, concatenate PCM buffers
 
 ## YapperKit
 

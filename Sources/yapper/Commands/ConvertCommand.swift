@@ -507,6 +507,9 @@ struct ConvertCommand: ParsableCommand {
 
         let outputPath = resolveOutputPath(for: input, format: format)
         let trackTitle = URL(fileURLWithPath: input).deletingPathExtension().lastPathComponent
+        let chunkingPolicy = TextChunkingPolicy.naturalProse
+        let chunker = TextChunker()
+        let textChunks = chunker.chunk(cleaned, policy: chunkingPolicy)
 
         if dryRun {
             print("Would convert: \(input)")
@@ -522,6 +525,7 @@ struct ConvertCommand: ParsableCommand {
             }
             print("  Track title: \(trackTitle)")
             printPreprocessingDiagnostics(preprocessed)
+            printChunkDiagnostics(textChunks, policy: chunkingPolicy)
             print("  Text: \(cleaned)")
             return
         }
@@ -541,9 +545,6 @@ struct ConvertCommand: ParsableCommand {
             fputs("Backed up existing \(outputPath) to \(backupPath)\n", stderr)
         }
 
-        // Pre-chunk for progress reporting
-        let chunker = TextChunker()
-        let textChunks = chunker.chunk(cleaned)
         let fileLabel = URL(fileURLWithPath: input).lastPathComponent
         ProgressReporter.fileHeader("Synthesising \(fileLabel)...", quiet: quiet)
         var reporter = ProgressReporter(totalChunks: textChunks.count, quiet: quiet)
@@ -551,7 +552,12 @@ struct ConvertCommand: ParsableCommand {
         // Synthesise with per-chunk progress
         var allSamples: [Float] = []
         var chunkIdx = 0
-        try engine.stream(text: cleaned, voice: voice, speed: speed) { chunk in
+        try engine.stream(
+            text: cleaned,
+            voice: voice,
+            speed: speed,
+            chunkingPolicy: chunkingPolicy
+        ) { chunk in
             let chunkText = chunkIdx < textChunks.count ? textChunks[chunkIdx].text : ""
             chunkIdx += 1
             reporter.update(chunkText: chunkText)
@@ -722,6 +728,17 @@ struct ConvertCommand: ParsableCommand {
             let lines = diagnostics.compactMap(\.lineIndex).map(String.init).joined(separator: ", ")
             let suffix = lines.isEmpty ? "" : " on line(s) \(lines)"
             print("    \(kind.rawValue): \(diagnostics.count) change(s)\(suffix)")
+        }
+    }
+
+    private func printChunkDiagnostics(_ chunks: [TextChunk], policy: TextChunkingPolicy) {
+        print("  Chunks: \(chunks.count) (policy: \(policy.rawValue))")
+        for (index, chunk) in chunks.enumerated() {
+            let paragraphValue = chunk.containsParagraphBreak ? "yes" : "no"
+            print(
+                "    Chunk \(index + 1): boundary=\(chunk.boundaryBefore.rawValue), " +
+                "paragraphs=\(paragraphValue), tokens=\(chunk.estimatedTokenCount)"
+            )
         }
     }
 
@@ -1146,7 +1163,10 @@ struct ConvertCommand: ParsableCommand {
                 if !quiet { fputs("Synthesising introduction...\n", stderr) }
                 let introText = applySubs(preambleText.joined(separator: "\n\n"))
                 let result = try engine.synthesize(
-                    text: introText, voice: introVoice, speed: speed
+                    text: introText,
+                    voice: introVoice,
+                    speed: speed,
+                    chunkingPolicy: .paragraphBounded
                 )
                 let introWavPath = tmpDir.appendingPathComponent("intro.wav")
                 try writeWav(samples: result.samples, sampleRate: 24000, to: introWavPath)
@@ -1358,7 +1378,12 @@ struct ConvertCommand: ParsableCommand {
             guard let voice = engine.voiceRegistry.voices.first(where: { $0.name == item.voiceName }) else {
                 continue
             }
-            let result = try engine.synthesize(text: item.text, voice: voice, speed: item.speed)
+            let result = try engine.synthesize(
+                text: item.text,
+                voice: voice,
+                speed: item.speed,
+                chunkingPolicy: .paragraphBounded
+            )
             let wavPath = wavDir.appendingPathComponent("entry_\(String(format: "%03d", item.idx)).wav")
             try writeWav(samples: result.samples, sampleRate: 24000, to: wavPath)
         }
@@ -1437,7 +1462,12 @@ struct ConvertCommand: ParsableCommand {
         guard let voice = engine.voiceRegistry.voices.first(where: { $0.name == voiceName }) else {
             throw ValidationError("Voice \(voiceName) not found")
         }
-        let result = try engine.synthesize(text: text, voice: voice, speed: speed)
+        let result = try engine.synthesize(
+            text: text,
+            voice: voice,
+            speed: speed,
+            chunkingPolicy: .paragraphBounded
+        )
         try writeWav(samples: result.samples, sampleRate: 24000, to: URL(fileURLWithPath: outputPath))
     }
 

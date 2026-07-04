@@ -69,9 +69,14 @@ public class YapperEngine {
     ///   - voice: Voice to use
     ///   - speed: Speed multiplier (1.0 = normal, 2.0 = twice as fast)
     /// - Returns: AudioResult with PCM samples at 24kHz and word timestamps
-    public func synthesize(text: String, voice: Voice, speed: Float = 1.0) throws -> AudioResult {
+    public func synthesize(
+        text: String,
+        voice: Voice,
+        speed: Float = 1.0,
+        chunkingPolicy: TextChunkingPolicy = .naturalProse
+    ) throws -> AudioResult {
         let voiceEmbedding = try voiceRegistry.load(name: voice.name)
-        let chunks = chunker.chunk(text)
+        let chunks = chunker.chunk(text, policy: chunkingPolicy)
 
         var allSamples: [Float] = []
         var allTimestamps: [WordTimestamp] = []
@@ -118,10 +123,11 @@ public class YapperEngine {
         text: String,
         voice: Voice,
         speed: Float = 1.0,
+        chunkingPolicy: TextChunkingPolicy = .naturalProse,
         onChunk: (AudioChunk) -> Void
     ) throws {
         let voiceEmbedding = try voiceRegistry.load(name: voice.name)
-        let chunks = chunker.chunk(text)
+        let chunks = chunker.chunk(text, policy: chunkingPolicy)
 
         for (index, chunk) in chunks.enumerated() {
             let (samples, timestamps) = try pipeline.synthesise(

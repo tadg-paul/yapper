@@ -75,27 +75,15 @@ test_release_convert_chunk_diagnostics() {
 run_test "RT-40.7" "convert dry-run exposes natural prose chunk diagnostics" test_release_convert_chunk_diagnostics
 
 test_release_script_dry_run_structure() {
-    local dir input output
-    dir=$(mktemp -d)
-    input="${dir}/script.md"
-    cat > "${input}" <<'EOF'
-# Test Script
-
-## Scene One
-
-ALICE
-Hello there.
-
-BOB
-General Kenobi.
-
-A door closes.
-EOF
-    output=$("${YAPPER}" convert "${input}" --script --dry-run --non-interactive 2>&1)
-    printf '%s' "${output}" | grep -q 'Script mode: Test Script' || return 1
+    local fixtures output
+    fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
+    output=$("${YAPPER}" convert "${fixtures}/test_script.md" \
+        --script-config "${fixtures}/test_script.yaml" \
+        --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Script mode: The Test Play' || return 1
     printf '%s' "${output}" | grep -q 'ALICE' || return 1
     printf '%s' "${output}" | grep -q 'BOB' || return 1
-    printf '%s' "${output}" | grep -q '\\[stage\\]' || return 1
+    printf '%s' "${output}" | grep -Fq '[stage]' || return 1
 }
 run_test "RT-40.4" "script dry-run keeps character and stage structure" test_release_script_dry_run_structure
 

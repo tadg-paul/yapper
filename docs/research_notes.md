@@ -53,10 +53,15 @@ words/s as a script. The difference is pipeline call count: dense prose
 packs sentences into fewer 510-token chunks, while script mode makes one
 `synthesize()` call per dialogue line.
 
-Stripping blank lines from the prose version reduced wall time by 35%
-(159.7s to 103s) and line count from 322 to 166 - confirming that
-`\n\n` paragraph breaks force chunk splits with full pipeline overhead
-each.
+Early prose conversion treated blank-line paragraph breaks as mandatory
+chunk splits. Stripping blank lines from the prose version reduced wall
+time by 35% (159.7s to 103s) and line count from 322 to 166, confirming
+that forced paragraph boundaries created extra full pipeline calls.
+
+Current chunking policy separates those cases. Natural prose mode packs
+sentences across paragraph breaks until the token budget requires a
+split, while paragraph-bounded mode preserves the old hard paragraph
+boundary behaviour for script-like synthesis.
 
 ## Kokoro pipeline architecture
 
@@ -126,11 +131,15 @@ weight.
 pause signal without forcing a chunk split.
 
 **Result:** Single `\n` behaves identically to space. The model and
-chunker treat them the same. Only `\n\n` forces a chunk boundary (via
-`TextChunker.chunk()` which splits on `\n\n` as mandatory boundaries).
+chunker treat them the same. Historically, `\n\n` forced a chunk
+boundary because `TextChunker.chunk()` split on blank-line paragraph
+breaks as mandatory boundaries.
 
-There is no middle ground between packed (fast, compressed prosody) and
-split (full prosody, full overhead).
+The current natural prose policy uses the middle ground suggested by
+later listening tests: paragraph breaks are retained as metadata and
+packed as ordinary sentence spacing unless the token budget requires a
+split. Paragraph-bounded mode remains available for script-like
+segmentation.
 
 **Additional finding:** Period + newline chosen over period + space as
 the default for packing, on the principle that `\n` may provide subtle
