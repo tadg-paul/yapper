@@ -79,9 +79,10 @@ public enum ProsePreprocessor {
             substitutions: substitutions,
             diagnostics: &diagnostics
         )
+        let hyphenNormalized = normalizeIntraWordHyphens(substituted)
 
         return ProsePreprocessResult(
-            text: substituted,
+            text: hyphenNormalized,
             sectionBreaks: sectionBreaks,
             diagnostics: diagnostics
         )
@@ -294,6 +295,14 @@ public enum ProsePreprocessor {
             options: .regularExpression
         )
         .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizeIntraWordHyphens(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"(?<=[A-Za-z])-(?=[A-Za-z])"#,
+            with: " ",
+            options: .regularExpression
+        )
     }
 
     private static func applySubstitutions(

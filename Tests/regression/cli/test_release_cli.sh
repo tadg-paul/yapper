@@ -34,6 +34,35 @@ test_release_speak_preprocessing() {
 }
 run_test "FAST-CLI.2" "speak dry-run applies prose preprocessing" test_release_speak_preprocessing
 
+test_release_speak_hyphen_preprocessing() {
+    local output
+    output=$(printf 'sea-holly and ice-cream' | "${YAPPER}" speak --dry-run 2>&1)
+    printf '%s' "${output}" | grep -q 'text:   sea holly and ice cream' || return 1
+    if printf '%s' "${output}" | grep -Eq 'sea-holly|ice-cream'; then
+        return 1
+    fi
+
+    output=$(printf 'car-park' | "${YAP_LINK}" --dry-run 2>&1)
+    printf '%s' "${output}" | grep -q 'text:   car park' || return 1
+    if printf '%s' "${output}" | grep -q 'car-park'; then
+        return 1
+    fi
+}
+run_test "RT-39.3" "speak and yap dry-run normalize intra-word hyphens" test_release_speak_hyphen_preprocessing
+
+test_release_convert_hyphen_preprocessing() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/hyphen.md"
+    printf 'The sea-holly met the car-park.' > "${input}"
+    output=$("${YAPPER}" convert "${input}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'The sea holly met the car park.' || return 1
+    if printf '%s' "${output}" | grep -Eq 'sea-holly|car-park'; then
+        return 1
+    fi
+}
+run_test "RT-39.4" "convert dry-run normalizes intra-word hyphens" test_release_convert_hyphen_preprocessing
+
 test_release_invalid_voice() {
     local output
     if output=$("${YAPPER}" speak --voice nonexistent_voice --dry-run "hello" 2>&1); then

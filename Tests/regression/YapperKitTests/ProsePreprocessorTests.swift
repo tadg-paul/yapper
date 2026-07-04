@@ -39,21 +39,30 @@ struct ProsePreprocessorTests {
         #expect(result.diagnostics.filter { $0.kind == .emphasis }.count == 5)
     }
 
-    @Test("RT-34.5 through RT-34.8: malformed and structural markers are preserved")
+    @Test("RT-34.5 through RT-34.8 and RT-39.2: malformed and structural markers are preserved")
     func malformedAndStructuralMarkersArePreserved() {
         let input = """
         This *does not close.
         * list item
-        A car-park stays together.
+        A 10-20 range stays together.
+        A --option flag stays together.
         A --- B stays together.
         """
         let result = ProsePreprocessor.preprocess(input)
 
         #expect(result.text.contains("This *does not close."))
         #expect(result.text.contains("* list item"))
-        #expect(result.text.contains("car-park"))
+        #expect(result.text.contains("10-20 range"))
+        #expect(result.text.contains("--option flag"))
         #expect(result.text.contains("A --- B stays together."))
         #expect(result.sectionBreaks.isEmpty)
+    }
+
+    @Test("RT-39.1: ASCII-letter intra-word hyphens become spaces")
+    func intraWordHyphensBecomeSpaces() {
+        let result = ProsePreprocessor.preprocess("sea-holly, ice-cream, and car-park.")
+
+        #expect(result.text == "sea holly, ice cream, and car park.")
     }
 
     @Test("RT-34.9 and RT-34.10: emphasis normalizes before speech substitutions")
