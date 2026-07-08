@@ -75,11 +75,13 @@ test_release_convert_chunk_diagnostics() {
 run_test "RT-40.7" "convert dry-run exposes natural prose chunk diagnostics" test_release_convert_chunk_diagnostics
 
 test_release_convert_fal_dry_run_plan() {
-    local dir input output
+    local dir home input output
     dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
     input="${dir}/remote.md"
     printf 'that is a lovely *jacket*\n\n--- I would like cheese, he said.' > "${input}"
-    output=$("${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1)
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1)
     printf '%s' "${output}" | grep -q 'Remote conversion plan:' || return 1
     printf '%s' "${output}" | grep -q 'Engine: fal' || return 1
     printf '%s' "${output}" | grep -q 'Endpoint: fal-ai/elevenlabs/tts/multilingual-v2' || return 1
@@ -94,11 +96,13 @@ test_release_convert_fal_dry_run_plan() {
 run_test "RT-41.3" "FAL convert dry-run shows transformed provider chunk plan" test_release_convert_fal_dry_run_plan
 
 test_release_convert_openai_dry_run_plan() {
-    local dir input output
+    local dir home input output
     dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
     input="${dir}/remote.md"
     printf 'A small _quoted_ phrase.' > "${input}"
-    output=$("${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1)
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1)
     printf '%s' "${output}" | grep -q 'Remote conversion plan:' || return 1
     printf '%s' "${output}" | grep -q 'Engine: openai' || return 1
     printf '%s' "${output}" | grep -q 'Model: gpt-4o-mini-tts' || return 1
@@ -112,8 +116,10 @@ test_release_convert_openai_dry_run_plan() {
 run_test "RT-41.4" "OpenAI convert dry-run shows transformed provider chunk plan" test_release_convert_openai_dry_run_plan
 
 test_release_convert_remote_credentials_nested_config() {
-    local dir input helper output
+    local dir home input helper output
     dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
     input="${dir}/remote.md"
     helper="${dir}/print-key"
     printf 'A small phrase.' > "${input}"
@@ -125,7 +131,7 @@ yapper:
     openai:
       api-key: ./print-key
 EOF
-    output=$("${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1)
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1)
     printf '%s' "${output}" | grep -q 'Generation credential: helper:' || return 1
     printf '%s' "${output}" | grep -q 'print-key' || return 1
     if printf '%s' "${output}" | grep -q 'test-key'; then
@@ -133,6 +139,84 @@ EOF
     fi
 }
 run_test "RT-41.25" "remote credentials resolve from nested yapper config helper" test_release_convert_remote_credentials_nested_config
+
+test_release_remote_generation_helper_errors_are_contextual() {
+    local dir home input helper output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    input="${dir}/remote.md"
+    helper="${dir}/bad-helper"
+    printf 'A small phrase.' > "${input}"
+    printf 'not a script\n' > "${helper}"
+    chmod +x "${helper}"
+    cat > "${dir}/yapper.yaml" <<EOF
+yapper:
+  remote-speech:
+    fal:
+      api-key: ./bad-helper
+EOF
+    if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1); then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.fal.api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'bad-helper' || return 1
+    printf '%s' "${output}" | grep -q 'Exec format error' || return 1
+
+    cat > "${dir}/yapper.yaml" <<EOF
+yapper:
+  remote-speech:
+    openai:
+      api-key: ./bad-helper
+EOF
+    if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1); then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.openai.api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'bad-helper' || return 1
+    printf '%s' "${output}" | grep -q 'Exec format error' || return 1
+}
+run_test "RT-44.1" "remote generation helper execution errors name slot and path" test_release_remote_generation_helper_errors_are_contextual
+
+test_release_remote_account_helper_errors_are_contextual() {
+    local dir home input helper output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    input="${dir}/remote.md"
+    helper="${dir}/bad-helper"
+    printf 'A small phrase.' > "${input}"
+    printf 'not a script\n' > "${helper}"
+    chmod +x "${helper}"
+    cat > "${dir}/yapper.yaml" <<EOF
+yapper:
+  remote-speech:
+    fal:
+      api-key: config-fal-generation-key
+      account-api-key: ./bad-helper
+EOF
+    if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1); then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.fal.account-api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'bad-helper' || return 1
+    printf '%s' "${output}" | grep -q 'Exec format error' || return 1
+
+    cat > "${dir}/yapper.yaml" <<EOF
+yapper:
+  remote-speech:
+    openai:
+      api-key: config-openai-generation-key
+      admin-api-key: ./bad-helper
+EOF
+    if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1); then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.openai.admin-api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'bad-helper' || return 1
+    printf '%s' "${output}" | grep -q 'Exec format error' || return 1
+}
+run_test "RT-44.2" "remote account helper execution errors name slot and path" test_release_remote_account_helper_errors_are_contextual
 
 test_release_namespaced_speech_substitution() {
     local dir input output

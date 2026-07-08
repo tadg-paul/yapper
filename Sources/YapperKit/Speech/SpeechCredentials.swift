@@ -21,6 +21,19 @@ public enum SpeechCredentialSlot: String, CaseIterable, Sendable {
             return ["OPENAI_SERVICE_KEY", "OPENAI_ADMIN_KEY"]
         }
     }
+
+    public var configPath: String {
+        switch self {
+        case .falGeneration:
+            return "yapper.remote-speech.fal.api-key"
+        case .falAccount:
+            return "yapper.remote-speech.fal.account-api-key"
+        case .openAIGeneration:
+            return "yapper.remote-speech.openai.api-key"
+        case .openAIAdmin:
+            return "yapper.remote-speech.openai.admin-api-key"
+        }
+    }
 }
 
 public enum SpeechCredentialSourceKind: String, Codable, Equatable, Sendable {
@@ -40,24 +53,27 @@ public struct ResolvedSpeechCredential: Equatable, Sendable {
 }
 
 public enum SpeechCredentialError: Error, CustomStringConvertible, Equatable {
-    case helperMissing(path: String)
-    case helperNotExecutable(path: String)
-    case helperFailed(path: String, status: Int32)
-    case helperTimedOut(path: String)
-    case helperEmptyOutput(path: String)
+    case helperMissing(slot: SpeechCredentialSlot, path: String)
+    case helperNotExecutable(slot: SpeechCredentialSlot, path: String)
+    case helperLaunchFailed(slot: SpeechCredentialSlot, path: String, message: String)
+    case helperFailed(slot: SpeechCredentialSlot, path: String, status: Int32)
+    case helperTimedOut(slot: SpeechCredentialSlot, path: String)
+    case helperEmptyOutput(slot: SpeechCredentialSlot, path: String)
 
     public var description: String {
         switch self {
-        case .helperMissing(let path):
-            return "Credential helper not found: \(path)"
-        case .helperNotExecutable(let path):
-            return "Credential helper is not executable: \(path)"
-        case .helperFailed(let path, let status):
-            return "Credential helper failed with status \(status): \(path)"
-        case .helperTimedOut(let path):
-            return "Credential helper timed out: \(path)"
-        case .helperEmptyOutput(let path):
-            return "Credential helper returned empty output: \(path)"
+        case .helperMissing(let slot, let path):
+            return "Credential helper for \(slot.configPath) not found: \(path)"
+        case .helperNotExecutable(let slot, let path):
+            return "Credential helper for \(slot.configPath) is not executable: \(path)"
+        case .helperLaunchFailed(let slot, let path, let message):
+            return "Credential helper for \(slot.configPath) failed to execute: \(path): \(message)"
+        case .helperFailed(let slot, let path, let status):
+            return "Credential helper for \(slot.configPath) failed with status \(status): \(path)"
+        case .helperTimedOut(let slot, let path):
+            return "Credential helper for \(slot.configPath) timed out: \(path)"
+        case .helperEmptyOutput(let slot, let path):
+            return "Credential helper for \(slot.configPath) returned empty output: \(path)"
         }
     }
 }
@@ -88,7 +104,7 @@ public struct SpeechCredentialResolver: Sendable {
         slot: SpeechCredentialSlot,
         config: SpeechCredentialConfig = SpeechCredentialConfig(value: nil, baseDirectory: nil)
     ) throws -> ResolvedSpeechCredential? {
-        if let configured = try resolveConfiguredCredential(config) {
+        if let configured = try resolveConfiguredCredential(config, slot: slot) {
             return configured
         }
 
@@ -105,14 +121,17 @@ public struct SpeechCredentialResolver: Sendable {
         return nil
     }
 
-    private func resolveConfiguredCredential(_ config: SpeechCredentialConfig) throws -> ResolvedSpeechCredential? {
+    private func resolveConfiguredCredential(
+        _ config: SpeechCredentialConfig,
+        slot: SpeechCredentialSlot
+    ) throws -> ResolvedSpeechCredential? {
         guard let rawValue = config.value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawValue.isEmpty else {
             return nil
         }
 
         if let helperPath = helperPath(for: rawValue, baseDirectory: config.baseDirectory) {
-            let secret = try runHelper(path: helperPath)
+            let secret = try runHelper(path: helperPath, slot: slot)
             return ResolvedSpeechCredential(
                 value: secret,
                 sourceKind: .helper,
@@ -150,13 +169,13 @@ public struct SpeechCredentialResolver: Sendable {
         return nil
     }
 
-    private func runHelper(path: String) throws -> String {
+    private func runHelper(path: String, slot: SpeechCredentialSlot) throws -> String {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
-            throw SpeechCredentialError.helperMissing(path: path)
+            throw SpeechCredentialError.helperMissing(slot: slot, path: path)
         }
         guard FileManager.default.isExecutableFile(atPath: path) else {
-            throw SpeechCredentialError.helperNotExecutable(path: path)
+            throw SpeechCredentialError.helperNotExecutable(slot: slot, path: path)
         }
 
         let process = Process()
@@ -167,15 +186,23 @@ public struct SpeechCredentialResolver: Sendable {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            throw SpeechCredentialError.helperLaunchFailed(
+                slot: slot,
+                path: path,
+                message: error.localizedDescription
+            )
+        }
         let semaphore = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in semaphore.signal() }
         if semaphore.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
-            throw SpeechCredentialError.helperTimedOut(path: path)
+            throw SpeechCredentialError.helperTimedOut(slot: slot, path: path)
         }
         guard process.terminationStatus == 0 else {
-            throw SpeechCredentialError.helperFailed(path: path, status: process.terminationStatus)
+            throw SpeechCredentialError.helperFailed(slot: slot, path: path, status: process.terminationStatus)
         }
 
         let data = output.fileHandleForReading.readDataToEndOfFile()
@@ -184,7 +211,7 @@ public struct SpeechCredentialResolver: Sendable {
             secret.removeLast()
         }
         guard !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw SpeechCredentialError.helperEmptyOutput(path: path)
+            throw SpeechCredentialError.helperEmptyOutput(slot: slot, path: path)
         }
         return secret
     }
