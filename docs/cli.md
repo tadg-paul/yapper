@@ -89,6 +89,8 @@ yapper convert chapter.md --engine openai --openai-model gpt-4o-mini-tts --voice
 
 Remote prose conversion uses provider-specific chunk constraints instead of Kokoro's 510-token budget. FAL chunks are prepared for the ElevenLabs multilingual endpoint and carry previous/next text context where available. OpenAI chunks respect the speech API input length limit. Script conversion remains native Yapper synthesis; script dry-run still uses the existing script preprocessing path.
 
+Older standalone `tts-fal` and `tts-openai` shell prototypes are not the canonical implementation for Yapper text transformation, chunking, dry-run rendering, or audiobook conversion. They should be treated as deprecated wrappers or operational references; new prose conversion work belongs in `yapper convert`.
+
 ### Remote engine flags
 
 | Flag | Engine | Purpose |
