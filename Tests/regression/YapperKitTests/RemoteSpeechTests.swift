@@ -34,25 +34,40 @@ struct RemoteSpeechTests {
         #expect(openAIPlan.constraints.policyName == "remote-sentence-4096")
     }
 
-    @Test("RT-41.25 through RT-41.27 and RT-41.37: credential slots resolve independently without exposing secrets")
-    func credentialSlotsResolveIndependently() throws {
+    @Test("RT-41.25 through RT-41.27 and RT-41.37: config credentials resolve before environment fallback")
+    func configCredentialsResolveBeforeEnvironmentFallback() throws {
         let resolver = SpeechCredentialResolver(environment: [
-            "FAL_KEY": "fal-generation-secret",
-            "FAL_ACCOUNT_KEY": "fal-account-secret",
-            "OPENAI_API_KEY": "openai-generation-secret",
-            "OPENAI_ADMIN_KEY": "openai-admin-secret"
+            "FAL_KEY": "env-fal-generation-secret",
+            "FAL_ACCOUNT_KEY": "env-fal-account-secret",
+            "OPENAI_API_KEY": "env-openai-generation-secret",
+            "OPENAI_ADMIN_KEY": "env-openai-admin-secret"
         ])
 
-        let falGeneration = try #require(try resolver.resolve(slot: .falGeneration))
-        let falAccount = try #require(try resolver.resolve(slot: .falAccount))
-        let openAIGeneration = try #require(try resolver.resolve(slot: .openAIGeneration))
-        let openAIAdmin = try #require(try resolver.resolve(slot: .openAIAdmin))
+        let falGeneration = try #require(try resolver.resolve(
+            slot: .falGeneration,
+            config: SpeechCredentialConfig(value: "config-fal-generation-secret", baseDirectory: nil)
+        ))
+        let falAccount = try #require(try resolver.resolve(
+            slot: .falAccount,
+            config: SpeechCredentialConfig(value: "config-fal-account-secret", baseDirectory: nil)
+        ))
+        let openAIGeneration = try #require(try resolver.resolve(
+            slot: .openAIGeneration,
+            config: SpeechCredentialConfig(value: "config-openai-generation-secret", baseDirectory: nil)
+        ))
+        let openAIAdmin = try #require(try resolver.resolve(
+            slot: .openAIAdmin,
+            config: SpeechCredentialConfig(value: "config-openai-admin-secret", baseDirectory: nil)
+        ))
+        let fallback = try #require(try resolver.resolve(slot: .falGeneration))
 
-        #expect(falGeneration.value == "fal-generation-secret")
-        #expect(falAccount.value == "fal-account-secret")
-        #expect(openAIGeneration.value == "openai-generation-secret")
-        #expect(openAIAdmin.value == "openai-admin-secret")
-        #expect(falGeneration.redactedDescription == "env: FAL_KEY")
+        #expect(falGeneration.value == "config-fal-generation-secret")
+        #expect(falAccount.value == "config-fal-account-secret")
+        #expect(openAIGeneration.value == "config-openai-generation-secret")
+        #expect(openAIAdmin.value == "config-openai-admin-secret")
+        #expect(fallback.value == "env-fal-generation-secret")
+        #expect(falGeneration.redactedDescription == "config literal: configured value")
+        #expect(fallback.redactedDescription == "env: FAL_KEY")
         #expect(!falGeneration.redactedDescription.contains("secret"))
         #expect(falAccount.value != falGeneration.value)
     }

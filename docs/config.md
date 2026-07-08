@@ -43,7 +43,7 @@ For inline IPA in source text (without config), use the bracket syntax directly:
 
 ### Remote API credentials
 
-Remote engines use the same `yapper.yaml` cascade as local conversion. Environment variables have highest precedence. Config values may be inline API keys or executable helper paths that print the key to stdout. Helper paths are executed directly with no shell interpolation; relative helper paths are resolved from the input file's config directory.
+Remote engines use the same `yapper.yaml` cascade as local conversion. Config values are the primary source and may be inline API keys or executable helper paths that print the key to stdout. Environment variables are fallbacks when the matching config key is absent. Helper paths are executed directly with no shell interpolation; relative helper paths are resolved from the input file's config directory.
 
 ```yaml
 fal:
@@ -64,7 +64,7 @@ The four credential slots are independent:
 | OpenAI generation | `OPENAI_API_KEY` | `openai.api-key` |
 | OpenAI admin/reporting | `OPENAI_SERVICE_KEY`, `OPENAI_ADMIN_KEY` | `openai.admin-api-key` |
 
-Dry-run and verbose output report only the source type, such as `env`, `config literal`, or `helper`; resolved secret values are not printed. Account/admin credentials are optional reporting credentials and do not fall back to generation keys by default.
+Dry-run and verbose output report only the source type, such as `config literal`, `helper`, or `env`; resolved secret values are not printed. Account/admin credentials are optional reporting credentials and do not fall back to generation keys by default.
 
 ### Voice assignment (script mode)
 

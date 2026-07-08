@@ -1,4 +1,4 @@
-// ABOUTME: Resolves API credentials from environment, config literals, or helper executables.
+// ABOUTME: Resolves API credentials from config literals, helper executables, or environment fallback.
 // ABOUTME: Reports credential source metadata without exposing resolved secret values.
 
 import Foundation
@@ -88,6 +88,10 @@ public struct SpeechCredentialResolver: Sendable {
         slot: SpeechCredentialSlot,
         config: SpeechCredentialConfig = SpeechCredentialConfig(value: nil, baseDirectory: nil)
     ) throws -> ResolvedSpeechCredential? {
+        if let configured = try resolveConfiguredCredential(config) {
+            return configured
+        }
+
         for name in slot.environmentNames {
             if let value = environment[name], !value.isEmpty {
                 return ResolvedSpeechCredential(
@@ -98,6 +102,10 @@ public struct SpeechCredentialResolver: Sendable {
             }
         }
 
+        return nil
+    }
+
+    private func resolveConfiguredCredential(_ config: SpeechCredentialConfig) throws -> ResolvedSpeechCredential? {
         guard let rawValue = config.value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawValue.isEmpty else {
             return nil
