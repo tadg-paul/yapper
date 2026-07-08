@@ -1,4 +1,4 @@
-<!-- Version: 1.1 | Last updated: 2026-07-08 -->
+<!-- Version: 1.2 | Last updated: 2026-07-08 -->
 
 # Configuration
 
@@ -12,7 +12,7 @@ Files are loaded and merged in order of precedence (later overrides earlier):
 2. **Project** - `./yapper.yaml` or `./script.yaml` in the input file's directory
 3. **CLI** - `--script-config path/to/config.yaml`
 
-Keys are merged individually. A project config that sets only `speech-substitution` inherits all other keys from the global config. Dictionary keys (`character-voices`, `speech-substitution`) are merged per-entry, with higher-precedence values winning per key.
+Keys are merged individually. A project config that sets only `yapper.speech-substitution` inherits all other keys from the global config. Dictionary keys (`yapper.voices.characters`, `yapper.speech-substitution`) are merged per-entry, with higher-precedence values winning per key.
 
 ## Config keys
 
@@ -27,10 +27,11 @@ author: "Author Name"
 ### Pronunciation
 
 ```yaml
-speech-substitution:
-  Cáit: Kawch                    # plain text replacement
-  Taḋg: "/taɪɡ/"               # IPA notation (slashes denote IPA)
-  Gda: Garda                    # regional term expansion
+yapper:
+  speech-substitution:
+    Cáit: Kawch                  # plain text replacement
+    Taḋg: "/taɪɡ/"             # IPA notation (slashes denote IPA)
+    Gda: Garda                  # regional term expansion
 ```
 
 Applied to all text before synthesis, in all modes.
@@ -73,12 +74,14 @@ Dry-run and verbose output report only the source type, such as `config literal`
 ### Voice assignment (script mode)
 
 ```yaml
-auto-assign-voices: true
-character-voices:
-  ALICE: bf_emma                 # explicit voice name
-  BOB: bm                       # filter shorthand (British male)
-narrator-voice: bf_lily          # voice for stage directions
-intro-voice: bf_alice            # voice for preamble (defaults to narrator-voice)
+yapper:
+  voices:
+    auto-assign: true
+    characters:
+      ALICE: bf_emma             # explicit voice name
+      BOB: bm                    # filter shorthand (British male)
+    narrator: bf_lily            # voice for stage directions
+    intro: bf_alice              # voice for preamble (defaults to narrator)
 ```
 
 ### Content rendering (script mode)
@@ -95,29 +98,52 @@ render:
 ### Pacing (script mode)
 
 ```yaml
-dialogue-speed: 1.0              # speech rate for dialogue (default: 1.0)
-stage-direction-speed: 0.9       # speech rate for stage directions (default: 1.0)
-gap-after-dialogue: 0.3          # silence after dialogue in seconds (default: 0.3)
-gap-after-stage-direction: 0.5   # silence after stage directions (default: 0.5)
-gap-after-scene: 1.0             # silence at scene boundaries (default: 1.0)
+yapper:
+  pacing:
+    dialogue-speed: 1.0              # speech rate for dialogue (default: 1.0)
+    stage-direction-speed: 0.9       # speech rate for stage directions (default: 1.0)
+    gap-after-dialogue: 0.3          # silence after dialogue in seconds (default: 0.3)
+    gap-after-stage-direction: 0.5   # silence after stage directions (default: 0.5)
+    gap-after-scene: 1.0             # silence at scene boundaries (default: 1.0)
 ```
 
 ### Performance
 
 ```yaml
-threads: 3                       # concurrent synthesis workers (default: 3)
+yapper:
+  performance:
+    threads: 3                   # concurrent synthesis workers (default: 3)
 ```
+
+### Legacy Yapper-owned keys
+
+Legacy top-level Yapper-owned keys are still accepted for backward compatibility, but each use prints a stdout warning naming the replacement path. Namespaced `yapper.*` values override legacy top-level values when both are present in the same config layer.
+
+| Legacy key | Replacement |
+|------------|-------------|
+| `speech-substitution` | `yapper.speech-substitution` |
+| `auto-assign-voices` | `yapper.voices.auto-assign` |
+| `character-voices` | `yapper.voices.characters` |
+| `narrator-voice` | `yapper.voices.narrator` |
+| `intro-voice` | `yapper.voices.intro` |
+| `dialogue-speed` | `yapper.pacing.dialogue-speed` |
+| `stage-direction-speed` | `yapper.pacing.stage-direction-speed` |
+| `gap-after-dialogue` | `yapper.pacing.gap-after-dialogue` |
+| `gap-after-stage-direction` | `yapper.pacing.gap-after-stage-direction` |
+| `gap-after-scene` | `yapper.pacing.gap-after-scene` |
+| `threads` | `yapper.performance.threads` |
 
 ## Example: global config
 
 A minimal global config at `~/.config/yapper/yapper.yaml` for Irish English pronunciation:
 
 ```yaml
-speech-substitution:
-  Taḋg: "/taɪɡ/"
-  Cáit: Kawch
-  Gda: Garda
-  Tusla: Toosla
+yapper:
+  speech-substitution:
+    Taḋg: "/taɪɡ/"
+    Cáit: Kawch
+    Gda: Garda
+    Tusla: Toosla
 ```
 
 ## Example: project script config
@@ -129,15 +155,6 @@ title: "About Time"
 subtitle: "A Two-Act Play"
 author: "Tadg Paul"
 
-auto-assign-voices: true
-character-voices:
-  KEVIN: am_adam
-  NESSA: af_alloy
-  CAIT: bf_emma
-  BEN: bm_daniel
-narrator-voice: bf_alice
-intro-voice: bf_alice
-
 render:
   stage-directions: true
   frontmatter: true
@@ -145,18 +162,31 @@ render:
   character-table: true
   transitions: true
 
-dialogue-speed: 1.0
-stage-direction-speed: 0.9
-gap-after-dialogue: 0.3
-gap-after-stage-direction: 0.5
-gap-after-scene: 1.0
+yapper:
+  voices:
+    auto-assign: true
+    characters:
+      KEVIN: am_adam
+      NESSA: af_alloy
+      CAIT: bf_emma
+      BEN: bm_daniel
+    narrator: bf_alice
+    intro: bf_alice
 
-speech-substitution:
-  Cáit: Kawch
-  Taḋg: "/taɪɡ/"
-  Gda: Garda
+  pacing:
+    dialogue-speed: 1.0
+    stage-direction-speed: 0.9
+    gap-after-dialogue: 0.3
+    gap-after-stage-direction: 0.5
+    gap-after-scene: 1.0
 
-threads: 3
+  speech-substitution:
+    Cáit: Kawch
+    Taḋg: "/taɪɡ/"
+    Gda: Garda
+
+  performance:
+    threads: 3
 ```
 
 ## Shared format

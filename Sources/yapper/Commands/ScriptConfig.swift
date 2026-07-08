@@ -40,6 +40,38 @@ struct OpenAIRemoteConfig: Decodable {
     }
 }
 
+struct YapperVoicesConfig: Decodable {
+    var autoAssign: Bool?
+    var narrator: String?
+    var intro: String?
+    var characters: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case autoAssign = "auto-assign"
+        case narrator, intro, characters
+    }
+}
+
+struct YapperPacingConfig: Decodable {
+    var dialogueSpeed: Float?
+    var stageDirectionSpeed: Float?
+    var gapAfterDialogue: Double?
+    var gapAfterStageDirection: Double?
+    var gapAfterScene: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case dialogueSpeed = "dialogue-speed"
+        case stageDirectionSpeed = "stage-direction-speed"
+        case gapAfterDialogue = "gap-after-dialogue"
+        case gapAfterStageDirection = "gap-after-stage-direction"
+        case gapAfterScene = "gap-after-scene"
+    }
+}
+
+struct YapperPerformanceConfig: Decodable {
+    var threads: Int?
+}
+
 struct RemoteSpeechConfig: Decodable {
     var fal: FALRemoteConfig?
     var openai: OpenAIRemoteConfig?
@@ -50,9 +82,15 @@ struct RemoteSpeechConfig: Decodable {
 }
 
 struct YapperConfig: Decodable {
+    var speechSubstitution: [String: String]?
+    var voices: YapperVoicesConfig?
+    var pacing: YapperPacingConfig?
+    var performance: YapperPerformanceConfig?
     var remoteSpeech: RemoteSpeechConfig?
 
     enum CodingKeys: String, CodingKey {
+        case speechSubstitution = "speech-substitution"
+        case voices, pacing, performance
         case remoteSpeech = "remote-speech"
     }
 }
@@ -120,7 +158,9 @@ struct ScriptConfig: Decodable {
             throw ScriptError.invalidConfig(path: path, message: "File is not valid UTF-8")
         }
         do {
-            return try YAMLDecoder().decode(ScriptConfig.self, from: yaml)
+            let config = try YAMLDecoder().decode(ScriptConfig.self, from: yaml)
+            emitDeprecationWarnings(config: config, path: path)
+            return config
         } catch {
             throw ScriptError.invalidConfig(path: path, message: error.localizedDescription)
         }
@@ -134,7 +174,7 @@ struct ScriptConfig: Decodable {
     /// 3. `explicitPath` (`--script-config` CLI flag)
     ///
     /// Keys are merged individually — a project config that sets only
-    /// `speech-substitution` inherits all other keys from the global config.
+    /// `yapper.speech-substitution` inherits all other keys from the global config.
     static func loadMerged(
         explicitPath: String? = nil,
         inputDir: String? = nil
@@ -182,8 +222,8 @@ struct ScriptConfig: Decodable {
     }
 
     /// Merge two configs: non-nil values in `override` replace values in `base`.
-    /// For dictionary fields (characterVoices, speechSubstitution), entries are
-    /// merged key-by-key with override winning per-key.
+    /// Legacy top-level Yapper keys are applied first, then namespaced `yapper.*`
+    /// keys, so the new schema wins when both forms are present.
     private static func merge(base: ScriptConfig, override: ScriptConfig) -> ScriptConfig {
         var result = base
         if let v = override.title { result.title = v }
@@ -226,6 +266,43 @@ struct ScriptConfig: Decodable {
             for (k, v) in overrideSubs { merged[k] = v }
             result.speechSubstitution = merged
         }
+        applyNamespacedYapperConfig(from: override, to: &result)
+
+        return result
+    }
+
+    private static func applyNamespacedYapperConfig(from override: ScriptConfig, to result: inout ScriptConfig) {
+        guard let yapper = override.yapper else { return }
+
+        if let namespacedSubs = yapper.speechSubstitution {
+            var merged = result.speechSubstitution ?? [:]
+            for (k, v) in namespacedSubs { merged[k] = v }
+            result.speechSubstitution = merged
+        }
+
+        if let voices = yapper.voices {
+            if let v = voices.autoAssign { result.autoAssignVoices = v }
+            if let v = voices.narrator { result.narratorVoice = v }
+            if let v = voices.intro { result.introVoice = v }
+            if let characters = voices.characters {
+                var merged = result.characterVoices ?? [:]
+                for (k, v) in characters { merged[k] = v }
+                result.characterVoices = merged
+            }
+        }
+
+        if let pacing = yapper.pacing {
+            if let v = pacing.dialogueSpeed { result.dialogueSpeed = v }
+            if let v = pacing.stageDirectionSpeed { result.stageDirectionSpeed = v }
+            if let v = pacing.gapAfterDialogue { result.gapAfterDialogue = v }
+            if let v = pacing.gapAfterStageDirection { result.gapAfterStageDirection = v }
+            if let v = pacing.gapAfterScene { result.gapAfterScene = v }
+        }
+
+        if let v = yapper.performance?.threads {
+            result.threads = v
+        }
+
         if let overrideFAL = override.yapper?.remoteSpeech?.fal {
             var remote = result.yapper?.remoteSpeech ?? RemoteSpeechConfig()
             var merged = remote.fal ?? FALRemoteConfig()
@@ -246,11 +323,52 @@ struct ScriptConfig: Decodable {
             yapperConfig.remoteSpeech = remote
             result.yapper = yapperConfig
         }
-
-        return result
     }
 
-    /// Apply speech substitutions to text.
+    private static func emitDeprecationWarnings(config: ScriptConfig, path: String) {
+        for warning in config.legacyYapperKeyWarnings() {
+            print("WARNING: deprecated Yapper config key '\(warning.legacy)' in \(path); use '\(warning.replacement)' instead.")
+        }
+    }
+
+    private func legacyYapperKeyWarnings() -> [(legacy: String, replacement: String)] {
+        var warnings: [(legacy: String, replacement: String)] = []
+        if speechSubstitution != nil {
+            warnings.append(("speech-substitution", "yapper.speech-substitution"))
+        }
+        if autoAssignVoices != nil {
+            warnings.append(("auto-assign-voices", "yapper.voices.auto-assign"))
+        }
+        if narratorVoice != nil {
+            warnings.append(("narrator-voice", "yapper.voices.narrator"))
+        }
+        if introVoice != nil {
+            warnings.append(("intro-voice", "yapper.voices.intro"))
+        }
+        if characterVoices != nil {
+            warnings.append(("character-voices", "yapper.voices.characters"))
+        }
+        if dialogueSpeed != nil {
+            warnings.append(("dialogue-speed", "yapper.pacing.dialogue-speed"))
+        }
+        if stageDirectionSpeed != nil {
+            warnings.append(("stage-direction-speed", "yapper.pacing.stage-direction-speed"))
+        }
+        if gapAfterDialogue != nil {
+            warnings.append(("gap-after-dialogue", "yapper.pacing.gap-after-dialogue"))
+        }
+        if gapAfterStageDirection != nil {
+            warnings.append(("gap-after-stage-direction", "yapper.pacing.gap-after-stage-direction"))
+        }
+        if gapAfterScene != nil {
+            warnings.append(("gap-after-scene", "yapper.pacing.gap-after-scene"))
+        }
+        if threads != nil {
+            warnings.append(("threads", "yapper.performance.threads"))
+        }
+        return warnings
+    }
+
     /// Apply speech substitutions to text.
     ///
     /// If a replacement value is IPA (wrapped in `/slashes/`), it is
@@ -260,11 +378,24 @@ struct ScriptConfig: Decodable {
         guard !substitutions.isEmpty else { return text }
         var result = text
         for (find, replace) in substitutions {
-            if replace.count > 2 && replace.hasPrefix("/") && replace.hasSuffix("/") {
-                // IPA value: wrap as [find](/phonemes/) for G2P processing
-                result = result.replacingOccurrences(of: find, with: "[\(find)](\(replace))")
-            } else {
-                result = result.replacingOccurrences(of: find, with: replace)
+            guard !find.isEmpty else { continue }
+            let pattern = NSRegularExpression.escapedPattern(for: find)
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let searchRange = NSRange(result.startIndex..., in: result)
+            let matches = regex.matches(in: result, range: searchRange)
+            for match in matches.reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
+                let matchedText = String(result[range])
+                let replacement: String
+                if replace.count > 2 && replace.hasPrefix("/") && replace.hasSuffix("/") {
+                    // IPA value: wrap the matched source word for G2P processing.
+                    replacement = "[\(matchedText)](\(replace))"
+                } else {
+                    replacement = replace
+                }
+                result.replaceSubrange(range, with: replacement)
             }
         }
         return result

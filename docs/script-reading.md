@@ -1,4 +1,4 @@
-<!-- Version: 2.0 | Last updated: 2026-04-26 -->
+<!-- Version: 2.1 | Last updated: 2026-07-08 -->
 
 # Script Reading
 
@@ -76,12 +76,43 @@ For the full configuration reference, config cascade rules, and example configs,
 
 Script-specific config keys include voice assignment, content rendering (stage directions, preamble, footnotes), pacing (per-type speed and gaps), and performance (thread count). All keys are optional with sensible defaults.
 
+### Script config shape
+
+Yapper-owned script settings live under the `yapper:` namespace so `script.yaml` can remain shared with First Folio. Shared metadata and rendering controls remain top-level.
+
+```yaml
+title: "My Play"
+author: "Author Name"
+
+render:
+  stage-directions: true
+  frontmatter: true
+  footnotes: true
+
+yapper:
+  voices:
+    auto-assign: true
+    characters:
+      ALICE: bf_emma
+      BOB: bm
+    narrator: bf_lily
+    intro: bf_alice
+  pacing:
+    dialogue-speed: 1.0
+    stage-direction-speed: 0.9
+    gap-after-dialogue: 0.3
+  performance:
+    threads: 3
+```
+
+Legacy top-level Yapper keys such as `auto-assign-voices`, `character-voices`, `narrator-voice`, `intro-voice`, pacing keys, and `threads` remain accepted for backward compatibility. Using them prints a deprecation warning naming the replacement `yapper.*` path.
+
 ### CLI flags
 
 | Flag | Purpose |
 |------|---------|
 | `--script-config path` | Path to script.yaml (otherwise auto-discovered) |
-| `--threads N` | Override worker process count (overrides YAML `threads`) |
+| `--threads N` | Override worker process count (overrides YAML `yapper.performance.threads`) |
 | `--speed N` | Global speed multiplier (multiplied with per-type speeds) |
 | `--dry-run` | Preview script structure without synthesis |
 | `--non-interactive` | Use metadata from script/config without prompting |
@@ -106,7 +137,7 @@ When `render.frontmatter` is enabled (the default), a preamble chapter is synthe
 2. Character descriptions from the character table (controlled by `render.character-table`)
 3. Outline text
 
-The preamble uses the `intro-voice` if specified, otherwise falls back to `narrator-voice`.
+The preamble uses `yapper.voices.intro` if specified, otherwise falls back to `yapper.voices.narrator`.
 
 ## Footnotes
 
@@ -138,7 +169,7 @@ Character names in stage directions are typically ALL CAPS in scripts (e.g. "KEV
 
 Script conversion uses multi-process concurrent synthesis by default (3 worker processes). Each worker gets its own Metal context for GPU access. The thread count is configurable:
 
-- `threads: N` in script.yaml
+- `yapper.performance.threads: N` in script.yaml
 - `--threads N` CLI flag (overrides YAML)
 - `--threads 1` for sequential synthesis
 

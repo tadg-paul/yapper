@@ -50,9 +50,10 @@ Yapper loads YAML config in a cascade: global (`~/.config/yapper/yapper.yaml`) >
 
 ```yaml
 # ~/.config/yapper/yapper.yaml
-speech-substitution:
-  Taḋg: "/taɪɡ/"
-  Cáit: Kawch
+yapper:
+  speech-substitution:
+    Taḋg: "/taɪɡ/"
+    Cáit: Kawch
 ```
 
 See [docs/config.md](docs/config.md) for the full reference.

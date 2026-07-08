@@ -134,6 +134,151 @@ EOF
 }
 run_test "RT-41.25" "remote credentials resolve from nested yapper config helper" test_release_convert_remote_credentials_nested_config
 
+test_release_namespaced_speech_substitution() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/namespaced.md"
+    printf 'That is a lovely jacket.' > "${input}"
+    cat > "${dir}/yapper.yaml" <<EOF
+yapper:
+  speech-substitution:
+    JACKET: coat
+EOF
+    output=$("${YAPPER}" convert "${input}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Text: That is a lovely coat.' || return 1
+}
+run_test "RT-43.1" "namespaced speech substitution applies case-insensitively" test_release_namespaced_speech_substitution
+
+test_release_legacy_speech_substitution_warns() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/legacy.md"
+    printf 'That is a lovely jacket.' > "${input}"
+    cat > "${dir}/yapper.yaml" <<EOF
+speech-substitution:
+  jacket: coat
+EOF
+    output=$("${YAPPER}" convert "${input}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q "WARNING: deprecated Yapper config key 'speech-substitution'" || return 1
+    printf '%s' "${output}" | grep -q 'Text: That is a lovely coat.' || return 1
+}
+run_test "RT-43.3" "legacy speech substitution applies and warns" test_release_legacy_speech_substitution_warns
+
+test_release_namespaced_substitution_overrides_legacy() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/override.md"
+    printf 'That is a lovely jacket.' > "${input}"
+    cat > "${dir}/yapper.yaml" <<EOF
+speech-substitution:
+  jacket: coat
+yapper:
+  speech-substitution:
+    jacket: jumper
+EOF
+    output=$("${YAPPER}" convert "${input}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Text: That is a lovely jumper.' || return 1
+    if printf '%s' "${output}" | grep -q 'Text: That is a lovely coat.'; then
+        return 1
+    fi
+}
+run_test "RT-43.5" "namespaced speech substitution overrides legacy value" test_release_namespaced_substitution_overrides_legacy
+
+test_release_legacy_script_config_warns() {
+    local dir fixtures input config output
+    dir=$(mktemp -d)
+    fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
+    input="${fixtures}/test_script.md"
+    config="${dir}/script.yaml"
+    cat > "${config}" <<EOF
+auto-assign-voices: false
+narrator-voice: bf_lily
+intro-voice: bf_lily
+character-voices:
+  ALICE: bf_emma
+dialogue-speed: 0.8
+threads: 1
+EOF
+    output=$("${YAPPER}" convert "${input}" --script-config "${config}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q "WARNING: deprecated Yapper config key 'auto-assign-voices'" || return 1
+    printf '%s' "${output}" | grep -q "WARNING: deprecated Yapper config key 'narrator-voice'" || return 1
+    printf '%s' "${output}" | grep -q "WARNING: deprecated Yapper config key 'character-voices'" || return 1
+    printf '%s' "${output}" | grep -q "WARNING: deprecated Yapper config key 'dialogue-speed'" || return 1
+    printf '%s' "${output}" | grep -q "WARNING: deprecated Yapper config key 'threads'" || return 1
+    printf '%s' "${output}" | grep -q 'ALICE: bf_emma' || return 1
+}
+run_test "RT-43.4" "legacy script voice and pacing config applies and warns" test_release_legacy_script_config_warns
+
+test_release_script_namespaced_voice_config() {
+    local dir fixtures input config output
+    dir=$(mktemp -d)
+    fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
+    input="${fixtures}/test_script.md"
+    config="${dir}/script.yaml"
+    cat > "${config}" <<EOF
+yapper:
+  voices:
+    auto-assign: false
+    narrator: bf_lily
+    intro: bf_lily
+    characters:
+      ALICE: bf_emma
+EOF
+    output=$("${YAPPER}" convert "${input}" --script-config "${config}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'ALICE: bf_emma' || return 1
+    printf '%s' "${output}" | grep -q 'Narrator (stage directions): bf_lily' || return 1
+    printf '%s' "${output}" | grep -q 'Introduction: bf_lily' || return 1
+}
+run_test "RT-43.2" "script dry-run applies namespaced voice config" test_release_script_namespaced_voice_config
+
+test_release_script_namespaced_voice_overrides_legacy() {
+    local dir fixtures input config output
+    dir=$(mktemp -d)
+    fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
+    input="${fixtures}/test_script.md"
+    config="${dir}/script.yaml"
+    cat > "${config}" <<EOF
+narrator-voice: af_heart
+character-voices:
+  ALICE: af_heart
+yapper:
+  voices:
+    narrator: bf_lily
+    characters:
+      ALICE: bf_emma
+EOF
+    output=$("${YAPPER}" convert "${input}" --script-config "${config}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'ALICE: bf_emma' || return 1
+    printf '%s' "${output}" | grep -q 'Narrator (stage directions): bf_lily' || return 1
+    if printf '%s' "${output}" | grep -q 'ALICE: af_heart'; then
+        return 1
+    fi
+}
+run_test "RT-43.6" "namespaced script voice config overrides legacy value" test_release_script_namespaced_voice_overrides_legacy
+
+test_release_shared_top_level_config_does_not_warn() {
+    local dir home fixtures input config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
+    input="${fixtures}/test_script.md"
+    config="${dir}/script.yaml"
+    cat > "${config}" <<EOF
+title: Shared Config
+author: Example Author
+render:
+  stage-directions: true
+  frontmatter: true
+EOF
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --script-config "${config}" --dry-run --non-interactive 2>&1)
+    if printf '%s' "${output}" | grep -q 'WARNING: deprecated Yapper config key'; then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Script mode: Shared Config' || return 1
+}
+run_test "RT-43.7" "shared top-level config does not emit Yapper deprecation warning" test_release_shared_top_level_config_does_not_warn
+
 test_release_script_dry_run_structure() {
     local fixtures output
     fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
