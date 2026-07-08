@@ -1,4 +1,4 @@
-<!-- Version: 1.0 | Last updated: 2026-04-26 -->
+<!-- Version: 1.1 | Last updated: 2026-07-08 -->
 
 # CLI Guide
 
@@ -77,7 +77,33 @@ yapper convert book.epub --non-interactive -o book.m4b
 
 # Preview conversion plan without synthesising
 yapper convert book.epub --dry-run
+
+# Use FAL/ElevenLabs through the native conversion planner
+yapper convert chapter.md --engine fal --voice Aria --dry-run
+
+# Use OpenAI speech through the native conversion planner
+yapper convert chapter.md --engine openai --openai-model gpt-4o-mini-tts --voice alloy --dry-run
 ```
+
+`--engine yapper` is the default and preserves local Kokoro synthesis. `--engine fal` and `--engine openai` reuse Yapper's document ingestion, prose preprocessing, speech substitutions, chunk planning, dry-run rendering, output naming, and audiobook assembly. Dry-run mode never calls provider generation endpoints or writes a final audio file.
+
+Remote prose conversion uses provider-specific chunk constraints instead of Kokoro's 510-token budget. FAL chunks are prepared for the ElevenLabs multilingual endpoint and carry previous/next text context where available. OpenAI chunks respect the speech API input length limit. Script conversion remains native Yapper synthesis; script dry-run still uses the existing script preprocessing path.
+
+### Remote engine flags
+
+| Flag | Engine | Purpose |
+|------|--------|---------|
+| `--engine yapper\|fal\|openai` | convert | Select local Yapper or remote API-backed synthesis |
+| `--fal-endpoint <id>` | fal | FAL model endpoint, default `fal-ai/elevenlabs/tts/multilingual-v2` |
+| `--fal-output-format <fmt>` | fal | FAL audio output format, default `mp3_44100_128` |
+| `--stability <n>` | fal | ElevenLabs stability, 0...1 |
+| `--similarity-boost <n>` | fal | ElevenLabs similarity boost, 0...1 |
+| `--style <n>` | fal | ElevenLabs style exaggeration, 0...1 |
+| `--language-code <code>` | fal | Optional provider language enforcement |
+| `--text-normalization auto\|on\|off` | fal | FAL text normalization mode |
+| `--openai-model <model>` | openai | OpenAI speech model, default `gpt-4o-mini-tts` |
+| `--openai-format <fmt>` | openai | OpenAI response format, default `aac` |
+| `--instructions <text>` | openai | Speech instructions for models that support them |
 
 ### Supported input formats
 
@@ -168,6 +194,7 @@ Examples: `bf` = British female, `am` = American male, `a` = any American, `f` =
 | Flag | Commands | Purpose |
 |------|----------|---------|
 | `--voice <name>` | speak, convert | Specific voice name (default: af_heart) |
+| `--engine <name>` | convert | Speech engine: yapper, fal, openai |
 | `--random-voice` | speak | Use a random voice instead of the default |
 | `--speed <n>` | speak, convert | Speed multiplier (default: 1.0) |
 | `--dry-run` | speak, convert | Preview without synthesis |

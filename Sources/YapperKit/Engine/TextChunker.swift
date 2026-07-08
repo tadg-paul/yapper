@@ -4,7 +4,7 @@
 import Foundation
 import NaturalLanguage
 
-public enum TextChunkingPolicy: String, Equatable, Sendable {
+public enum TextChunkingPolicy: String, Codable, Equatable, Sendable {
     case naturalProse = "natural-prose"
     case paragraphBounded = "paragraph-bounded"
 }

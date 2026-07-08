@@ -74,6 +74,43 @@ test_release_convert_chunk_diagnostics() {
 }
 run_test "RT-40.7" "convert dry-run exposes natural prose chunk diagnostics" test_release_convert_chunk_diagnostics
 
+test_release_convert_fal_dry_run_plan() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/remote.md"
+    printf 'that is a lovely *jacket*\n\n--- I would like cheese, he said.' > "${input}"
+    output=$("${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Remote conversion plan:' || return 1
+    printf '%s' "${output}" | grep -q 'Engine: fal' || return 1
+    printf '%s' "${output}" | grep -q 'Endpoint: fal-ai/elevenlabs/tts/multilingual-v2' || return 1
+    printf '%s' "${output}" | grep -q 'Chunk policy: remote-sentence-2500' || return 1
+    printf '%s' "${output}" | grep -q 'Chunks: 1' || return 1
+    printf '%s' "${output}" | grep -q 'Text: that is a lovely "jacket" "I would like cheese, he said."' || return 1
+    printf '%s' "${output}" | grep -q '(dry run' || return 1
+    if [[ -e "${dir}/remote.m4a" ]]; then
+        return 1
+    fi
+}
+run_test "RT-41.3" "FAL convert dry-run shows transformed provider chunk plan" test_release_convert_fal_dry_run_plan
+
+test_release_convert_openai_dry_run_plan() {
+    local dir input output
+    dir=$(mktemp -d)
+    input="${dir}/remote.md"
+    printf 'A small _quoted_ phrase.' > "${input}"
+    output=$("${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Remote conversion plan:' || return 1
+    printf '%s' "${output}" | grep -q 'Engine: openai' || return 1
+    printf '%s' "${output}" | grep -q 'Model: gpt-4o-mini-tts' || return 1
+    printf '%s' "${output}" | grep -q 'Chunk policy: remote-sentence-4096' || return 1
+    printf '%s' "${output}" | grep -q 'Text: A small "quoted" phrase.' || return 1
+    printf '%s' "${output}" | grep -q '(dry run' || return 1
+    if [[ -e "${dir}/remote.m4a" ]]; then
+        return 1
+    fi
+}
+run_test "RT-41.4" "OpenAI convert dry-run shows transformed provider chunk plan" test_release_convert_openai_dry_run_plan
+
 test_release_script_dry_run_structure() {
     local fixtures output
     fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"

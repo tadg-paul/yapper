@@ -20,6 +20,26 @@ struct RenderConfig: Decodable {
     }
 }
 
+struct FALRemoteConfig: Decodable {
+    var apiKey: String?
+    var accountAPIKey: String?
+
+    enum CodingKeys: String, CodingKey {
+        case apiKey = "api-key"
+        case accountAPIKey = "account-api-key"
+    }
+}
+
+struct OpenAIRemoteConfig: Decodable {
+    var apiKey: String?
+    var adminAPIKey: String?
+
+    enum CodingKeys: String, CodingKey {
+        case apiKey = "api-key"
+        case adminAPIKey = "admin-api-key"
+    }
+}
+
 struct ScriptConfig: Decodable {
     var title: String?
     var subtitle: String?
@@ -49,6 +69,8 @@ struct ScriptConfig: Decodable {
 
     // Pronunciation substitutions: applied to text before synthesis
     var speechSubstitution: [String: String]?
+    var fal: FALRemoteConfig?
+    var openai: OpenAIRemoteConfig?
 
     enum CodingKeys: String, CodingKey {
         case title, subtitle, author, threads, render
@@ -65,6 +87,7 @@ struct ScriptConfig: Decodable {
         case introVoice = "intro-voice"
         case renderFootnotes = "render-footnotes"
         case speechSubstitution = "speech-substitution"
+        case fal, openai
     }
 
     // Resolved accessors — prefer nested render block, fall back to legacy flat keys
@@ -186,6 +209,18 @@ struct ScriptConfig: Decodable {
             var merged = result.speechSubstitution ?? [:]
             for (k, v) in overrideSubs { merged[k] = v }
             result.speechSubstitution = merged
+        }
+        if let overrideFAL = override.fal {
+            var merged = result.fal ?? FALRemoteConfig()
+            if let v = overrideFAL.apiKey { merged.apiKey = v }
+            if let v = overrideFAL.accountAPIKey { merged.accountAPIKey = v }
+            result.fal = merged
+        }
+        if let overrideOpenAI = override.openai {
+            var merged = result.openai ?? OpenAIRemoteConfig()
+            if let v = overrideOpenAI.apiKey { merged.apiKey = v }
+            if let v = overrideOpenAI.adminAPIKey { merged.adminAPIKey = v }
+            result.openai = merged
         }
 
         return result

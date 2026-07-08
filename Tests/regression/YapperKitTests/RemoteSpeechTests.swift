@@ -1,0 +1,289 @@
+// ABOUTME: Regression tests for remote speech planning, credentials, and provider payloads.
+// ABOUTME: Uses fake HTTP responses so FAL and OpenAI are never contacted by regression tests.
+
+import Foundation
+import Testing
+@testable import YapperKit
+
+@Suite(.serialized)
+struct RemoteSpeechTests {
+    @Test("RT-41.3 and RT-41.4: remote plans share prose preprocessing with engine-specific constraints")
+    func remotePlansSharePreprocessingWithProviderConstraints() {
+        let source = SpeechSourceDocument(
+            sourcePath: "/book/chapter.md",
+            chapterTitle: "Chapter",
+            text: "that is a lovely *jacket*.\n\n--- I would like cheese, he said."
+        )
+
+        let falPlan = SpeechPlanner.makePlan(
+            sources: [source],
+            engineKind: .fal,
+            substitutions: ["jacket": "coat"],
+            engineSettingsSignature: "fal-settings"
+        )
+        let openAIPlan = SpeechPlanner.makePlan(
+            sources: [source],
+            engineKind: .openAI,
+            substitutions: ["jacket": "coat"],
+            engineSettingsSignature: "openai-settings"
+        )
+
+        #expect(falPlan.chapters[0].transformedText == "that is a lovely \"coat\".\n\n\"I would like cheese, he said.\"")
+        #expect(openAIPlan.chapters[0].transformedText == falPlan.chapters[0].transformedText)
+        #expect(falPlan.constraints.policyName == "remote-sentence-2500")
+        #expect(openAIPlan.constraints.policyName == "remote-sentence-4096")
+    }
+
+    @Test("RT-41.25 through RT-41.27 and RT-41.37: credential slots resolve independently without exposing secrets")
+    func credentialSlotsResolveIndependently() throws {
+        let resolver = SpeechCredentialResolver(environment: [
+            "FAL_KEY": "fal-generation-secret",
+            "FAL_ACCOUNT_KEY": "fal-account-secret",
+            "OPENAI_API_KEY": "openai-generation-secret",
+            "OPENAI_ADMIN_KEY": "openai-admin-secret"
+        ])
+
+        let falGeneration = try #require(try resolver.resolve(slot: .falGeneration))
+        let falAccount = try #require(try resolver.resolve(slot: .falAccount))
+        let openAIGeneration = try #require(try resolver.resolve(slot: .openAIGeneration))
+        let openAIAdmin = try #require(try resolver.resolve(slot: .openAIAdmin))
+
+        #expect(falGeneration.value == "fal-generation-secret")
+        #expect(falAccount.value == "fal-account-secret")
+        #expect(openAIGeneration.value == "openai-generation-secret")
+        #expect(openAIAdmin.value == "openai-admin-secret")
+        #expect(falGeneration.redactedDescription == "env: FAL_KEY")
+        #expect(!falGeneration.redactedDescription.contains("secret"))
+        #expect(falAccount.value != falGeneration.value)
+    }
+
+    @Test("RT-41.38: helper credentials execute directly and trim one newline")
+    func helperCredentialExecutesDirectly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_remote_speech_tests_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let helper = directory.appendingPathComponent("print-key.sh")
+        try "#!/usr/bin/env bash\nprintf 'helper-secret\\n'\n".write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+
+        let resolver = SpeechCredentialResolver(environment: [:])
+        let credential = try #require(try resolver.resolve(
+            slot: .openAIGeneration,
+            config: SpeechCredentialConfig(value: "./print-key.sh", baseDirectory: directory)
+        ))
+
+        #expect(credential.value == "helper-secret")
+        #expect(credential.sourceKind == .helper)
+        #expect(!credential.redactedDescription.contains("helper-secret"))
+    }
+
+    @Test("RT-41.33: FAL synthesis sends generation payload only when synthesis is invoked")
+    func falClientPayloadIncludesContext() async throws {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueJSON(#"{"audio":{"url":"https://media.example.test/audio/out.mp3?token=secret"}}"#)
+        await httpClient.enqueueData(Data("audio-bytes".utf8), contentType: "audio/mpeg")
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_fal_provider_tests_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let settings = FALSpeechSettings(
+            voice: "Aria",
+            outputFormat: "mp3_44100_128",
+            style: 0.2,
+            speed: 0.95,
+            generationBaseURL: URL(string: "https://fal.example.test")!
+        )
+        let credential = ResolvedSpeechCredential(
+            value: "fal-secret",
+            sourceKind: .environment,
+            sourceDescription: "FAL_KEY"
+        )
+        let client = FALSpeechClient(settings: settings, credential: credential, httpClient: httpClient)
+        let chunk = PreparedSpeechChunk(
+            chapterIndex: 0,
+            chapterTitle: "Chapter",
+            sourcePath: "chapter.md",
+            chunkIndex: 1,
+            text: "Current text.",
+            previousText: "Previous text.",
+            nextText: "Next text.",
+            characterCount: 13,
+            boundaryBefore: "character-limit",
+            containsParagraphBreak: false,
+            stableHash: "abc123"
+        )
+
+        let file = try await client.synthesize(chunk, stagingDirectory: directory)
+        let requests = await httpClient.requests
+        let generationBody = try #require(String(data: requests[0].httpBody ?? Data(), encoding: .utf8))
+
+        #expect(requests.count == 2)
+        #expect(file.lastPathComponent == "abc123.mp3")
+        #expect(generationBody.contains(#""previous_text":"Previous text.""#))
+        #expect(generationBody.contains(#""next_text":"Next text.""#))
+        #expect(generationBody.contains(#""apply_text_normalization":"auto""#))
+        #expect(requests[0].value(forHTTPHeaderField: "Authorization") == "Key fal-secret")
+    }
+
+    @Test("RT-41.10 and RT-41.33: OpenAI payload follows speech API and legacy models omit instructions")
+    func openAIClientOmitsInstructionsForLegacyModels() async throws {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueData(Data("aac-bytes".utf8), contentType: "audio/aac")
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_openai_provider_tests_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let settings = OpenAISpeechSettings(
+            model: "tts-1",
+            voice: "alloy",
+            responseFormat: "aac",
+            speed: 1.1,
+            instructions: "Read with warmth.",
+            baseURL: URL(string: "https://openai.example.test/v1")!
+        )
+        let credential = ResolvedSpeechCredential(
+            value: "openai-secret",
+            sourceKind: .environment,
+            sourceDescription: "OPENAI_API_KEY"
+        )
+        let client = OpenAISpeechClient(settings: settings, credential: credential, httpClient: httpClient)
+        let chunk = PreparedSpeechChunk(
+            chapterIndex: 0,
+            chapterTitle: "Chapter",
+            sourcePath: "chapter.md",
+            chunkIndex: 0,
+            text: "Current text.",
+            previousText: nil,
+            nextText: nil,
+            characterCount: 13,
+            boundaryBefore: "none",
+            containsParagraphBreak: false,
+            stableHash: "def456"
+        )
+
+        _ = try await client.synthesize(chunk, stagingDirectory: directory)
+        let request = try #require(await httpClient.requests.first)
+        let body = try #require(String(data: request.httpBody ?? Data(), encoding: .utf8))
+
+        #expect(body.contains(#""model":"tts-1""#))
+        #expect(body.contains(#""response_format":"aac""#))
+        #expect(!body.contains("instructions"))
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer openai-secret")
+    }
+
+    @Test("RT-41.9 and RT-41.12: FAL reporter returns pricing estimate and balance diagnostics")
+    func falReporterReturnsPricingAndBalance() async {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueJSON(#"{"prices":[{"endpoint_id":"fal-ai/elevenlabs/tts/multilingual-v2","unit_price":0.18,"unit":"1000 characters","currency":"usd"}]}"#)
+        await httpClient.enqueueJSON(#"{"credits":{"current_balance":12.5,"currency":"usd"}}"#)
+        let credential = ResolvedSpeechCredential(
+            value: "fal-account-secret",
+            sourceKind: .environment,
+            sourceDescription: "FAL_ACCOUNT_KEY"
+        )
+        let reporter = FALAccountReporter(
+            baseURL: URL(string: "https://api.fal.example.test")!,
+            credential: credential,
+            httpClient: httpClient
+        )
+
+        let diagnostics = await reporter.dryRunDiagnostics(
+            endpoint: "fal-ai/elevenlabs/tts/multilingual-v2",
+            characterCount: 2500
+        )
+
+        #expect(diagnostics.contains {
+            $0.label == "FAL pricing" && $0.value.contains("estimated 0.4500 usd")
+        })
+        #expect(diagnostics.contains {
+            $0.label == "FAL account balance" && $0.value == "12.5 usd"
+        })
+    }
+
+    @Test("RT-41.34: FAL account 403 diagnostic names likely Admin-scope problem")
+    func falReporterAdminScopeDiagnostic() async {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueJSON(#"{"message":"forbidden"}"#, status: 403)
+        await httpClient.enqueueJSON(#"{"credits":{"current_balance":12.5,"currency":"usd"}}"#)
+        let credential = ResolvedSpeechCredential(
+            value: "fal-account-secret",
+            sourceKind: .environment,
+            sourceDescription: "FAL_ACCOUNT_KEY"
+        )
+        let reporter = FALAccountReporter(
+            baseURL: URL(string: "https://api.fal.example.test")!,
+            credential: credential,
+            httpClient: httpClient
+        )
+
+        let diagnostics = await reporter.dryRunDiagnostics(
+            endpoint: "fal-ai/elevenlabs/tts/multilingual-v2",
+            characterCount: 100
+        )
+
+        #expect(diagnostics.contains {
+            $0.label == "FAL pricing" && $0.value.contains("Admin scope")
+        })
+    }
+
+    @Test("RT-41.15 and RT-41.35: OpenAI reporter keeps partial usage when costs fail")
+    func openAIReporterKeepsPartialUsageWhenCostsFail() async {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueJSON(#"{"data":[{"results":[{"characters":1200,"num_model_requests":3}]}]}"#)
+        await httpClient.enqueueJSON(#"{"error":{"message":"unavailable"}}"#, status: 500)
+        let credential = ResolvedSpeechCredential(
+            value: "openai-admin-secret",
+            sourceKind: .environment,
+            sourceDescription: "OPENAI_ADMIN_KEY"
+        )
+        let reporter = OpenAIAdminReporter(
+            baseURL: URL(string: "https://api.openai.example.test/v1")!,
+            credential: credential,
+            httpClient: httpClient
+        )
+
+        let diagnostics = await reporter.usageAndCostDiagnostics()
+
+        #expect(diagnostics.contains {
+            $0.label == "OpenAI audio speech usage" && $0.value.contains("characters 1200")
+        })
+        #expect(diagnostics.contains {
+            $0.label == "OpenAI organization costs" && $0.value.contains("unavailable")
+        })
+    }
+}
+
+private actor FakeSpeechHTTPClient: SpeechHTTPClient {
+    private struct Response {
+        let data: Data
+        let status: Int
+        let contentType: String
+    }
+
+    private var responses: [Response] = []
+    private(set) var requests: [URLRequest] = []
+
+    func enqueueJSON(_ json: String, status: Int = 200) {
+        responses.append(Response(data: Data(json.utf8), status: status, contentType: "application/json"))
+    }
+
+    func enqueueData(_ data: Data, status: Int = 200, contentType: String) {
+        responses.append(Response(data: data, status: status, contentType: contentType))
+    }
+
+    func data(for request: URLRequest, timeout: TimeInterval) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        let response = responses.removeFirst()
+        let httpResponse = HTTPURLResponse(
+            url: request.url ?? URL(string: "https://example.test")!,
+            statusCode: response.status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": response.contentType]
+        )!
+        return (response.data, httpResponse)
+    }
+}

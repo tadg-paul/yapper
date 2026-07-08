@@ -1,4 +1,4 @@
-<!-- Version: 1.0 | Last updated: 2026-04-26 -->
+<!-- Version: 1.1 | Last updated: 2026-07-08 -->
 
 # Configuration
 
@@ -40,6 +40,31 @@ Applied to all text before synthesis, in all modes.
 Substitution keys are matched case-insensitively, so one entry covers lowercase, capitalized, and uppercase occurrences in source text.
 
 For inline IPA in source text (without config), use the bracket syntax directly: `[word](/phonemes/)`.
+
+### Remote API credentials
+
+Remote engines use the same `yapper.yaml` cascade as local conversion. Environment variables have highest precedence. Config values may be inline API keys or executable helper paths that print the key to stdout. Helper paths are executed directly with no shell interpolation; relative helper paths are resolved from the input file's config directory.
+
+```yaml
+fal:
+  api-key: ./secrets/fal-generation-key
+  account-api-key: ./secrets/fal-account-key
+
+openai:
+  api-key: ./secrets/openai-generation-key
+  admin-api-key: ./secrets/openai-admin-key
+```
+
+The four credential slots are independent:
+
+| Slot | Environment | Config |
+|------|-------------|--------|
+| FAL generation | `FAL_KEY` | `fal.api-key` |
+| FAL account/reporting | `FAL_ACCOUNT_KEY` | `fal.account-api-key` |
+| OpenAI generation | `OPENAI_API_KEY` | `openai.api-key` |
+| OpenAI admin/reporting | `OPENAI_SERVICE_KEY`, `OPENAI_ADMIN_KEY` | `openai.admin-api-key` |
+
+Dry-run and verbose output report only the source type, such as `env`, `config literal`, or `helper`; resolved secret values are not printed. Account/admin credentials are optional reporting credentials and do not fall back to generation keys by default.
 
 ### Voice assignment (script mode)
 

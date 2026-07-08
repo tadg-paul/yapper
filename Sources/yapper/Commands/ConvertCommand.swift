@@ -30,6 +30,48 @@ struct ConvertCommand: ParsableCommand {
     @Option(name: .long, help: "Speech speed multiplier (default: 1.0).")
     var speed: Float = 1.0
 
+    @Option(name: .long, help: "Speech engine: yapper (default), fal, openai.")
+    var engine: String = "yapper"
+
+    @Option(name: .long, help: "FAL endpoint for --engine fal.")
+    var falEndpoint: String = "fal-ai/elevenlabs/tts/multilingual-v2"
+
+    @Option(name: .long, help: "FAL output format for --engine fal.")
+    var falOutputFormat: String = "mp3_44100_128"
+
+    @Option(name: .long, help: "FAL ElevenLabs stability value, 0...1.")
+    var stability: Double = 0.5
+
+    @Option(name: .long, help: "FAL ElevenLabs similarity boost value, 0...1.")
+    var similarityBoost: Double = 0.75
+
+    @Option(name: .long, help: "FAL ElevenLabs style exaggeration value, 0...1.")
+    var style: Double?
+
+    @Option(name: .long, help: "FAL language code for --engine fal.")
+    var languageCode: String?
+
+    @Option(name: .long, help: "FAL text normalization: auto, on, off.")
+    var textNormalization: String = "auto"
+
+    @Option(name: .long, help: "OpenAI speech model for --engine openai.")
+    var openaiModel: String = "gpt-4o-mini-tts"
+
+    @Option(name: .long, help: "OpenAI response format: mp3, opus, aac, flac, wav, pcm.")
+    var openaiFormat: String = "aac"
+
+    @Option(name: .long, help: "OpenAI speech instructions for supported models.")
+    var instructions: String?
+
+    @Option(name: .long, help: .hidden)
+    var falBaseURL: String?
+
+    @Option(name: .long, help: .hidden)
+    var falPlatformBaseURL: String?
+
+    @Option(name: .long, help: .hidden)
+    var openaiBaseURL: String?
+
     @Option(name: .long, help: "Author metadata for the output file.")
     var author: String?
 
@@ -77,6 +119,8 @@ struct ConvertCommand: ParsableCommand {
         guard !inputs.isEmpty else {
             throw ValidationError("No input files specified.")
         }
+        let selectedEngine = try resolveSpeechEngineKind()
+        try validateProviderOptions(for: selectedEngine)
 
         // Pre-flight: detect commands that would write then overwrite the same file
         if inputs.count > 1, let output {
@@ -118,6 +162,11 @@ struct ConvertCommand: ParsableCommand {
                 if dryRun {
                     try printScriptDryRun(scriptDoc)
                 } else {
+                    guard selectedEngine == .yapper else {
+                        throw ValidationError(
+                            "Remote engines currently support prose conversion only; use native yapper for script mode."
+                        )
+                    }
                     let engine = try YapperEngine(
                         modelPath: defaultModelPath(),
                         voicesPath: defaultVoicesPath()
@@ -130,6 +179,11 @@ struct ConvertCommand: ParsableCommand {
                 throw ValidationError(
                     "Script config found but input file contains no parseable script content: \(inputs[0])")
             }
+        }
+
+        if selectedEngine != .yapper {
+            try runRemoteProseMode(engineKind: selectedEngine)
+            return
         }
 
         let engine = try YapperEngine(
@@ -222,6 +276,667 @@ struct ConvertCommand: ParsableCommand {
     }
 
     // MARK: - Audiobook mode
+
+    private func runRemoteProseMode(engineKind: SpeechEngineKind) throws {
+        let chapters = try gatherChapters()
+        let isMultiFile = inputs.count > 1
+        let multiChapter = isMultiFile || chapters.count > 1
+        let outputFormat = remoteOutputFormat(engineKind: engineKind, multiChapter: multiChapter)
+        let outputPath = try resolveRemoteOutputPath(format: outputFormat, multiChapter: multiChapter)
+        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+        let mergedConfig = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let substitutions = mergedConfig.speechSubstitution ?? [:]
+        let settingsSignature = try remoteSettingsSignature(engineKind: engineKind)
+        let sources = chapters.enumerated().map { index, chapter in
+            SpeechSourceDocument(
+                sourcePath: inputs[min(index, inputs.count - 1)],
+                chapterTitle: chapter.title,
+                text: chapter.text
+            )
+        }
+        let plan = SpeechPlanner.makePlan(
+            sources: sources,
+            engineKind: engineKind,
+            substitutions: substitutions,
+            engineSettingsSignature: settingsSignature
+        )
+        let (resolvedAuthor, resolvedTitle) = resolveMetadata(chapters: chapters)
+
+        if dryRun {
+            try printRemoteDryRun(
+                plan: plan,
+                outputPath: outputPath,
+                outputFormat: outputFormat,
+                author: resolvedAuthor,
+                title: resolvedTitle,
+                config: mergedConfig
+            )
+            return
+        }
+
+        try ensureOutputDirectoryExists(outputPath)
+        if FileManager.default.fileExists(atPath: outputPath) {
+            let backupPath = nextBackupPath(for: outputPath)
+            try FileManager.default.moveItem(atPath: outputPath, toPath: backupPath)
+            fputs("Backed up existing \(outputPath) to \(backupPath)\n", stderr)
+        }
+
+        let stage = RemoteSpeechStaging(directory: URL(fileURLWithPath: "\(outputPath).yapper-stage"))
+        try stage.createDirectoryIfNeeded()
+        var manifest = stage.loadReusableManifest(for: plan, settingsSignature: settingsSignature)
+            ?? RemoteSpeechStageManifest(
+                engineKind: engineKind,
+                settingsSignature: settingsSignature,
+                chunks: plan.chunks,
+                completed: []
+            )
+        try stage.writeManifest(manifest)
+
+        let completedByHash: [String: RemoteSpeechStageRecord] = Dictionary(
+            uniqueKeysWithValues: manifest.completed.map { ($0.stableHash, $0) }
+        )
+        for diagnostic in try remoteNormalStartDiagnostics(
+            engineKind: engineKind,
+            config: mergedConfig
+        ) where !quiet {
+            fputs("\(diagnostic.label): \(diagnostic.value)\n", stderr)
+        }
+
+        var chunkFiles: [String: URL] = [:]
+        for chunk in plan.chunks {
+            if let record = completedByHash[chunk.stableHash],
+               let file = stage.existingFile(for: record) {
+                chunkFiles[chunk.stableHash] = file
+                if !quiet {
+                    fputs("Reusing staged chunk \(chunk.chapterIndex + 1).\(chunk.chunkIndex + 1)\n", stderr)
+                }
+                continue
+            }
+
+            if !quiet {
+                fputs("Synthesising \(engineKind.rawValue) chunk \(chunk.chapterIndex + 1).\(chunk.chunkIndex + 1)...\n", stderr)
+            }
+            let file = try synthesizeRemoteChunk(
+                chunk,
+                engineKind: engineKind,
+                config: mergedConfig,
+                stagingDirectory: stage.directory
+            )
+            chunkFiles[chunk.stableHash] = file
+            manifest.completed.append(RemoteSpeechStageRecord(
+                stableHash: chunk.stableHash,
+                chapterIndex: chunk.chapterIndex,
+                chunkIndex: chunk.chunkIndex,
+                audioFile: file.lastPathComponent,
+                completedAt: Date()
+            ))
+            try stage.writeManifest(manifest)
+        }
+
+        for diagnostic in try remoteNormalEndDiagnostics(
+            engineKind: engineKind,
+            config: mergedConfig
+        ) where !quiet {
+            fputs("\(diagnostic.label): \(diagnostic.value)\n", stderr)
+        }
+
+        let chapterInfo = try assembleRemoteChapters(
+            plan: plan,
+            chunkFiles: chunkFiles,
+            stagingDirectory: stage.directory,
+            targetFormat: outputFormat
+        )
+
+        if outputFormat == "m4b" {
+            try AudiobookAssembler.assembleM4B(
+                chapters: chapterInfo,
+                output: outputPath,
+                title: resolvedTitle,
+                author: resolvedAuthor,
+                coverArtPath: nil
+            )
+        } else if let chapter = chapterInfo.first {
+            try encodeWithFFmpeg(
+                input: chapter.aacPath,
+                output: outputPath,
+                format: outputFormat,
+                author: resolvedAuthor,
+                title: resolvedTitle,
+                trackNumber: nil,
+                trackTotal: nil,
+                trackTitle: chapter.title
+            )
+        }
+
+        if !quiet {
+            fputs("Created \(outputPath)\n", stderr)
+        }
+    }
+
+    private func printRemoteDryRun(
+        plan: SpeechConversionPlan,
+        outputPath: String,
+        outputFormat: String,
+        author: String?,
+        title: String?,
+        config: ScriptConfig
+    ) throws {
+        print("Remote conversion plan:")
+        print("  Engine: \(plan.engineKind.rawValue)")
+        switch plan.engineKind {
+        case .fal:
+            print("  Endpoint: \(falEndpoint)")
+            print("  Voice: \(voice ?? "Rachel")")
+            print("  Output format: \(falOutputFormat)")
+            print("  Stability: \(stability)")
+            print("  Similarity boost: \(similarityBoost)")
+            if let style { print("  Style: \(style)") }
+            print("  Speed: \(speed)")
+            print("  Text normalization: \(textNormalization)")
+        case .openAI:
+            print("  Model: \(openaiModel)")
+            print("  Voice: \(voice ?? "alloy")")
+            print("  Response format: \(openaiFormat)")
+            print("  Speed: \(speed)")
+            if let instructions, !instructions.isEmpty { print("  Instructions: \(instructions)") }
+        case .yapper, .f5:
+            break
+        }
+        print("  Output: \(outputPath)")
+        print("  Format: \(outputFormat)")
+        if let author { print("  Author: \(author)") }
+        if let title { print("  Title: \(title)") }
+        print("  Chunk policy: \(plan.constraints.policyName)")
+        print("  Chunks: \(plan.chunks.count)")
+        print("  Transformed characters: \(plan.transformedCharacterCount)")
+
+        let resolver = SpeechCredentialResolver()
+        printCredentialSource(
+            label: "Generation credential",
+            credential: try optionalRemoteGenerationCredential(
+                engineKind: plan.engineKind,
+                config: config,
+                resolver: resolver
+            )
+        )
+        printCredentialSource(
+            label: "Account credential",
+            credential: try optionalRemoteAccountCredential(
+                engineKind: plan.engineKind,
+                config: config,
+                resolver: resolver
+            )
+        )
+        for diagnostic in try remoteDryRunDiagnostics(plan: plan, config: config) {
+            print("  \(diagnostic.label): \(diagnostic.value)")
+        }
+
+        for chapter in plan.chapters {
+            print("  Chapter \(chapter.chapterIndex + 1): \(chapter.title)")
+            for chunk in chapter.chunks {
+                print("    Chunk \(chunk.chunkIndex + 1): chars=\(chunk.characterCount), boundary=\(chunk.boundaryBefore)")
+                print("      Text: \(chunk.text)")
+            }
+        }
+        print("")
+        print("(dry run — no synthesis performed)")
+    }
+
+    private func remoteDryRunDiagnostics(
+        plan: SpeechConversionPlan,
+        config: ScriptConfig
+    ) throws -> [RemoteSpeechDiagnostic] {
+        let resolver = SpeechCredentialResolver()
+        guard let credential = try optionalRemoteAccountCredential(
+            engineKind: plan.engineKind,
+            config: config,
+            resolver: resolver
+        ) else {
+            return []
+        }
+        switch plan.engineKind {
+        case .fal:
+            let settings = try falSettings()
+            let reporter = FALAccountReporter(baseURL: settings.platformBaseURL, credential: credential)
+            return try runAsyncAndBlock {
+                await reporter.dryRunDiagnostics(
+                    endpoint: settings.endpoint,
+                    characterCount: plan.transformedCharacterCount
+                )
+            }
+        case .openAI:
+            let settings = try openAISettings()
+            let reporter = OpenAIAdminReporter(baseURL: settings.baseURL, credential: credential)
+            return try runAsyncAndBlock {
+                await reporter.usageAndCostDiagnostics()
+            }
+        case .yapper, .f5:
+            return []
+        }
+    }
+
+    private func remoteNormalStartDiagnostics(
+        engineKind: SpeechEngineKind,
+        config: ScriptConfig
+    ) throws -> [RemoteSpeechDiagnostic] {
+        let resolver = SpeechCredentialResolver()
+        guard let credential = try optionalRemoteAccountCredential(
+            engineKind: engineKind,
+            config: config,
+            resolver: resolver
+        ) else {
+            return []
+        }
+        switch engineKind {
+        case .fal:
+            let settings = try falSettings()
+            let reporter = FALAccountReporter(baseURL: settings.platformBaseURL, credential: credential)
+            return try runAsyncAndBlock {
+                await reporter.normalStartDiagnostics()
+            }
+        case .openAI:
+            let settings = try openAISettings()
+            let reporter = OpenAIAdminReporter(baseURL: settings.baseURL, credential: credential)
+            return try runAsyncAndBlock {
+                await reporter.usageAndCostDiagnostics()
+            }
+        case .yapper, .f5:
+            return []
+        }
+    }
+
+    private func remoteNormalEndDiagnostics(
+        engineKind: SpeechEngineKind,
+        config: ScriptConfig
+    ) throws -> [RemoteSpeechDiagnostic] {
+        let resolver = SpeechCredentialResolver()
+        guard let credential = try optionalRemoteAccountCredential(
+            engineKind: engineKind,
+            config: config,
+            resolver: resolver
+        ) else {
+            return []
+        }
+        switch engineKind {
+        case .fal:
+            let settings = try falSettings()
+            let reporter = FALAccountReporter(baseURL: settings.platformBaseURL, credential: credential)
+            return try runAsyncAndBlock {
+                await reporter.normalEndDiagnostics(endpoint: settings.endpoint)
+            }
+        case .openAI:
+            let settings = try openAISettings()
+            let reporter = OpenAIAdminReporter(baseURL: settings.baseURL, credential: credential)
+            return try runAsyncAndBlock {
+                await reporter.usageAndCostDiagnostics()
+            }
+        case .yapper, .f5:
+            return []
+        }
+    }
+
+    private func printCredentialSource(label: String, credential: ResolvedSpeechCredential?) {
+        if let credential {
+            print("  \(label): \(credential.redactedDescription)")
+        } else {
+            print("  \(label): unavailable")
+        }
+    }
+
+    private func synthesizeRemoteChunk(
+        _ chunk: PreparedSpeechChunk,
+        engineKind: SpeechEngineKind,
+        config: ScriptConfig,
+        stagingDirectory: URL
+    ) throws -> URL {
+        let resolver = SpeechCredentialResolver()
+        switch engineKind {
+        case .fal:
+            guard let credential = try optionalRemoteGenerationCredential(
+                engineKind: .fal,
+                config: config,
+                resolver: resolver
+            ) else {
+                throw ValidationError("FAL generation credential not configured. Set FAL_KEY or fal.api-key.")
+            }
+            let client = FALSpeechClient(settings: try falSettings(), credential: credential)
+            return try runAsyncAndBlock {
+                try await client.synthesize(chunk, stagingDirectory: stagingDirectory)
+            }
+        case .openAI:
+            guard let credential = try optionalRemoteGenerationCredential(
+                engineKind: .openAI,
+                config: config,
+                resolver: resolver
+            ) else {
+                throw ValidationError("OpenAI generation credential not configured. Set OPENAI_API_KEY or openai.api-key.")
+            }
+            let client = OpenAISpeechClient(settings: try openAISettings(), credential: credential)
+            return try runAsyncAndBlock {
+                try await client.synthesize(chunk, stagingDirectory: stagingDirectory)
+            }
+        case .yapper, .f5:
+            throw ValidationError("Remote synthesis is not available for engine \(engineKind.rawValue).")
+        }
+    }
+
+    private func assembleRemoteChapters(
+        plan: SpeechConversionPlan,
+        chunkFiles: [String: URL],
+        stagingDirectory: URL,
+        targetFormat: String
+    ) throws -> [(title: String, aacPath: String, duration: Double)] {
+        try plan.chapters.map { chapter in
+            let files = try chapter.chunks.map { chunk -> URL in
+                guard let file = chunkFiles[chunk.stableHash] else {
+                    throw ValidationError("Missing staged audio for chunk \(chunk.stableHash).")
+                }
+                return file
+            }
+            let chapterAac = stagingDirectory.appendingPathComponent("chapter_\(chapter.chapterIndex + 1).aac")
+            if files.count == 1 {
+                try encodeWithFFmpeg(
+                    input: files[0].path,
+                    output: chapterAac.path,
+                    format: "m4a",
+                    author: nil,
+                    title: nil,
+                    trackNumber: nil,
+                    trackTotal: nil,
+                    trackTitle: chapter.title
+                )
+            } else {
+                try concatenateEncodedAudio(files: files, output: chapterAac, format: "m4a")
+            }
+            let duration = try audioDurationSeconds(chapterAac.path)
+            return (title: chapter.title, aacPath: chapterAac.path, duration: duration)
+        }
+    }
+
+    private func concatenateEncodedAudio(files: [URL], output: URL, format: String) throws {
+        let ffmpeg = try requireFFmpeg()
+        let concatFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_concat_\(UUID().uuidString).txt")
+        let content = files.map { "file '\(escapeConcatPath($0.path))'" }.joined(separator: "\n")
+        try content.write(to: concatFile, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: concatFile) }
+
+        var args = ["-y", "-f", "concat", "-safe", "0", "-i", concatFile.path]
+        if format == "mp3" {
+            args += ["-c:a", "libmp3lame", "-b:a", "128k"]
+        } else {
+            args += ["-c:a", "aac", "-b:a", "64k"]
+        }
+        args.append(output.path)
+        try runProcess(executable: ffmpeg, arguments: args, errorContext: "ffmpeg concat")
+    }
+
+    private func audioDurationSeconds(_ path: String) throws -> Double {
+        let ffprobe = ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"]
+            .first { FileManager.default.fileExists(atPath: $0) }
+        guard let ffprobe else {
+            throw ValidationError("ffprobe not found. Install via: brew install ffmpeg")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffprobe)
+        process.arguments = [
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw ValidationError("ffprobe exited with status \(process.terminationStatus)")
+        }
+        let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    private func ensureOutputDirectoryExists(_ outputPath: String) throws {
+        let outputDir = URL(fileURLWithPath: outputPath).deletingLastPathComponent().path
+        if !outputDir.isEmpty && outputDir != "." {
+            var isDir: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: outputDir, isDirectory: &isDir) || !isDir.boolValue {
+                throw ValidationError("Output directory does not exist: \(outputDir)")
+            }
+        }
+    }
+
+    private func remoteOutputFormat(engineKind: SpeechEngineKind, multiChapter: Bool) -> String {
+        if multiChapter { return "m4b" }
+        if let format { return format.lowercased() }
+        if let output {
+            let ext = URL(fileURLWithPath: output).pathExtension.lowercased()
+            if ["m4a", "mp3", "m4b"].contains(ext) { return ext }
+        }
+        return "m4a"
+    }
+
+    private func resolveRemoteOutputPath(format: String, multiChapter: Bool) throws -> String {
+        if let output { return output }
+        if multiChapter, inputs.count > 1 {
+            guard let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ValidationError("Multi-file remote conversion without -o requires --title.")
+            }
+            let firstInput = URL(fileURLWithPath: inputs[0])
+            return "\(firstInput.deletingLastPathComponent().path)/\(normalizedFilename(title)).m4b"
+        }
+        if multiChapter {
+            return resolveAudiobookOutputPath(format: format)
+        }
+        return resolveOutputPath(for: inputs[0], format: format)
+    }
+
+    private func normalizedFilename(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ "))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        let collapsed = String(scalars).replacingOccurrences(
+            of: #"\s+"#,
+            with: "-",
+            options: .regularExpression
+        )
+        return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-")).lowercased()
+    }
+
+    private func optionalRemoteGenerationCredential(
+        engineKind: SpeechEngineKind,
+        config: ScriptConfig,
+        resolver: SpeechCredentialResolver
+    ) throws -> ResolvedSpeechCredential? {
+        let baseDirectory = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
+        switch engineKind {
+        case .fal:
+            return try resolver.resolve(
+                slot: .falGeneration,
+                config: SpeechCredentialConfig(value: config.fal?.apiKey, baseDirectory: baseDirectory)
+            )
+        case .openAI:
+            return try resolver.resolve(
+                slot: .openAIGeneration,
+                config: SpeechCredentialConfig(value: config.openai?.apiKey, baseDirectory: baseDirectory)
+            )
+        case .yapper, .f5:
+            return nil
+        }
+    }
+
+    private func optionalRemoteAccountCredential(
+        engineKind: SpeechEngineKind,
+        config: ScriptConfig,
+        resolver: SpeechCredentialResolver
+    ) throws -> ResolvedSpeechCredential? {
+        let baseDirectory = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
+        switch engineKind {
+        case .fal:
+            return try resolver.resolve(
+                slot: .falAccount,
+                config: SpeechCredentialConfig(value: config.fal?.accountAPIKey, baseDirectory: baseDirectory)
+            )
+        case .openAI:
+            return try resolver.resolve(
+                slot: .openAIAdmin,
+                config: SpeechCredentialConfig(value: config.openai?.adminAPIKey, baseDirectory: baseDirectory)
+            )
+        case .yapper, .f5:
+            return nil
+        }
+    }
+
+    private func falSettings() throws -> FALSpeechSettings {
+        FALSpeechSettings(
+            endpoint: falEndpoint,
+            voice: voice ?? "Rachel",
+            outputFormat: falOutputFormat,
+            stability: stability,
+            similarityBoost: similarityBoost,
+            style: style,
+            speed: Double(speed),
+            languageCode: languageCode,
+            textNormalization: textNormalization,
+            generationBaseURL: try remoteBaseURL(falBaseURL, fallback: "https://fal.run"),
+            platformBaseURL: try remoteBaseURL(falPlatformBaseURL, fallback: "https://api.fal.ai")
+        )
+    }
+
+    private func openAISettings() throws -> OpenAISpeechSettings {
+        OpenAISpeechSettings(
+            model: openaiModel,
+            voice: voice ?? "alloy",
+            responseFormat: openaiFormat,
+            speed: Double(speed),
+            instructions: instructions,
+            baseURL: try remoteBaseURL(openaiBaseURL, fallback: "https://api.openai.com/v1")
+        )
+    }
+
+    private func remoteSettingsSignature(engineKind: SpeechEngineKind) throws -> String {
+        switch engineKind {
+        case .fal:
+            return try falSettings().signature
+        case .openAI:
+            return try openAISettings().signature
+        case .yapper, .f5:
+            return engineKind.rawValue
+        }
+    }
+
+    private func remoteBaseURL(_ value: String?, fallback: String) throws -> URL {
+        guard let value, !value.isEmpty else {
+            return URL(string: fallback)!
+        }
+        guard let url = URL(string: value) else {
+            throw ValidationError("Invalid URL: \(value)")
+        }
+        return url
+    }
+
+    private func resolveSpeechEngineKind() throws -> SpeechEngineKind {
+        switch engine.lowercased() {
+        case "yapper", "native", "kokoro":
+            return .yapper
+        case "fal":
+            return .fal
+        case "openai", "open-ai":
+            return .openAI
+        default:
+            throw ValidationError("Unsupported engine '\(engine)'. Use yapper, fal, or openai.")
+        }
+    }
+
+    private func validateProviderOptions(for engineKind: SpeechEngineKind) throws {
+        if engineKind != .openAI, instructions != nil {
+            throw ValidationError("--instructions is only valid with --engine openai.")
+        }
+        if engineKind != .fal {
+            if style != nil || languageCode != nil || falEndpoint != "fal-ai/elevenlabs/tts/multilingual-v2"
+                || falOutputFormat != "mp3_44100_128" || textNormalization != "auto" {
+                throw ValidationError("FAL-specific options require --engine fal.")
+            }
+        }
+        if engineKind != .openAI {
+            if openaiModel != "gpt-4o-mini-tts" || openaiFormat != "aac" || openaiBaseURL != nil {
+                throw ValidationError("OpenAI-specific options require --engine openai.")
+            }
+        }
+        if engineKind != .fal, falBaseURL != nil || falPlatformBaseURL != nil {
+            throw ValidationError("FAL-specific options require --engine fal.")
+        }
+        if engineKind == .fal {
+            guard (0...1).contains(stability), (0...1).contains(similarityBoost) else {
+                throw ValidationError("FAL stability and similarity boost must be between 0 and 1.")
+            }
+            if let style, !(0...1).contains(style) {
+                throw ValidationError("FAL style must be between 0 and 1.")
+            }
+            guard (0.7...1.2).contains(Double(speed)) else {
+                throw ValidationError("FAL speed must be between 0.7 and 1.2.")
+            }
+            guard ["auto", "on", "off"].contains(textNormalization) else {
+                throw ValidationError("FAL text normalization must be auto, on, or off.")
+            }
+        }
+        if engineKind == .openAI {
+            guard (0.25...4.0).contains(Double(speed)) else {
+                throw ValidationError("OpenAI speed must be between 0.25 and 4.0.")
+            }
+            guard ["mp3", "opus", "aac", "flac", "wav", "pcm"].contains(openaiFormat) else {
+                throw ValidationError("OpenAI response format must be mp3, opus, aac, flac, wav, or pcm.")
+            }
+            if (openaiModel == "tts-1" || openaiModel == "tts-1-hd"), instructions != nil {
+                throw ValidationError("--instructions is not supported by OpenAI models tts-1 or tts-1-hd.")
+            }
+        }
+    }
+
+    private func requireFFmpeg() throws -> String {
+        let ffmpegPath = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+            .first { FileManager.default.fileExists(atPath: $0) }
+        guard let ffmpeg = ffmpegPath else {
+            throw ValidationError("ffmpeg not found. Install via: brew install ffmpeg")
+        }
+        return ffmpeg
+    }
+
+    private func runProcess(executable: String, arguments: [String], errorContext: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw ValidationError("\(errorContext) exited with status \(process.terminationStatus)")
+        }
+    }
+
+    private func escapeConcatPath(_ path: String) -> String {
+        path.replacingOccurrences(of: "'", with: "'\\''")
+    }
+
+    private func runAsyncAndBlock<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = AsyncResultBox<T>()
+        Task {
+            do {
+                box.result = Result<T, Error>.success(try await operation())
+            } catch {
+                box.result = Result<T, Error>.failure(error)
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        guard let result = box.result else {
+            throw ValidationError("Async operation ended without a result.")
+        }
+        return try result.get()
+    }
 
     private func runAudiobookMode(engine: YapperEngine, chapters: [Chapter]) throws {
         let outputFormat = resolveFormat(multiChapter: true)
@@ -1508,4 +2223,8 @@ struct ConvertCommand: ParsableCommand {
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         try file.write(from: buffer)
     }
+}
+
+private final class AsyncResultBox<T>: @unchecked Sendable {
+    var result: Result<T, Error>?
 }

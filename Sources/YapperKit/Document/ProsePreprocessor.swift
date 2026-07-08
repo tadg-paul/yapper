@@ -3,12 +3,12 @@
 
 import Foundation
 
-public enum ProsePauseKind: String, Sendable {
+public enum ProsePauseKind: String, Codable, Sendable {
     case paragraph
     case section
 }
 
-public struct ProseSectionBreak: Equatable, Sendable {
+public struct ProseSectionBreak: Codable, Equatable, Sendable {
     public let lineIndex: Int
     public let pause: ProsePauseKind
 
@@ -18,7 +18,7 @@ public struct ProseSectionBreak: Equatable, Sendable {
     }
 }
 
-public enum ProsePreprocessDiagnosticKind: String, CaseIterable, Sendable {
+public enum ProsePreprocessDiagnosticKind: String, CaseIterable, Codable, Sendable {
     case cleanup
     case sectionBreak
     case emphasis
@@ -26,7 +26,7 @@ public enum ProsePreprocessDiagnosticKind: String, CaseIterable, Sendable {
     case substitution
 }
 
-public struct ProsePreprocessDiagnostic: Equatable, Sendable {
+public struct ProsePreprocessDiagnostic: Codable, Equatable, Sendable {
     public let kind: ProsePreprocessDiagnosticKind
     public let original: String
     public let replacement: String
@@ -45,7 +45,7 @@ public struct ProsePreprocessDiagnostic: Equatable, Sendable {
     }
 }
 
-public struct ProsePreprocessResult: Equatable, Sendable {
+public struct ProsePreprocessResult: Codable, Equatable, Sendable {
     public let text: String
     public let sectionBreaks: [ProseSectionBreak]
     public let diagnostics: [ProsePreprocessDiagnostic]

@@ -1,10 +1,10 @@
-<!-- Version: 0.4 | Last updated: 2026-04-06 -->
+<!-- Version: 0.5 | Last updated: 2026-07-08 -->
 
 # Yapper - Architecture
 
 ## Overview
 
-Yapper is a two-layer Swift system: **YapperKit** (library) and **yapper** (CLI). YapperKit owns TTS inference and audio output. The CLI handles document ingestion, chapter detection, and audiobook assembly.
+Yapper is a two-layer Swift system: **YapperKit** (library) and **yapper** (CLI). YapperKit owns local TTS inference, speech planning, provider boundaries, and audio output. The CLI handles document ingestion, chapter detection, engine selection, and audiobook assembly.
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -34,6 +34,53 @@ Yapper is a two-layer Swift system: **YapperKit** (library) and **yapper** (CLI)
 │  MisakiSwift (G2P) + MLX Swift (Metal inference)  │
 └──────────────────────────────────────────────────┘
 ```
+
+The diagram above shows the default native Kokoro/Yapper engine. API-backed engines are optional conversion backends selected with `yapper convert --engine fal` or `--engine openai`; the default `--engine yapper` path remains local and offline.
+
+## Speech planning and engine boundary
+
+All prose engines share a provider-neutral preparation boundary:
+
+1. Document ingestion and chapter detection produce ordered `Chapter` values.
+2. `ProsePreprocessor` applies markup cleanup, section-break handling, emphasis quoting, dialogue-dash conversion, intra-word hyphen normalization, and `speech-substitution` replacements.
+3. `SpeechPlanner` creates `PreparedSpeechChunk` values with chapter/source metadata, transformed text, adjacent context, character counts, boundary metadata, and stable hashes.
+4. The selected engine synthesizes those prepared chunks.
+5. Audio assembly writes the final M4A, MP3, or M4B only after required chunks have succeeded.
+
+Chunk constraints are engine-specific. Native Yapper delegates to `TextChunker` and the Kokoro 510-token budget. FAL and OpenAI use remote character/request constraints over the same transformed prose, so provider clients never parse raw Markdown.
+
+The synthesis boundary is local/remote neutral:
+
+```swift
+public enum SpeechEngineKind {
+    case yapper
+    case fal
+    case openAI
+    case f5
+}
+
+public enum SpeechSynthesisAsset {
+    case pcm(AudioResult)
+    case encodedAudio(file: URL, format: String, duration: TimeInterval?, metadata: [String: String])
+}
+```
+
+This keeps API credentials, retry policy, and account reporting out of the base local synthesis contract and leaves room for a future local F5 engine that emits PCM but selects voices through reference audio rather than Kokoro embeddings.
+
+### Remote provider behaviour
+
+FAL generation uses `Authorization: Key ...` against the generation base URL, default `https://fal.run`, while platform/account reporting uses a separate base URL, default `https://api.fal.ai`. OpenAI generation uses `Authorization: Bearer ...` against `/v1/audio/speech`. Provider request and response bodies are typed `Codable` values.
+
+Remote dry-run renders the conversion plan, provider settings, transformed chunks, character count, credential source types, and output path without generation calls or final audio side effects. Normal remote conversion writes a persistent staging directory next to the intended output path, stores `plan.json`, and reuses completed chunks when hashes and engine settings still match. A partial final audiobook is not presented as successful.
+
+```text
+output.m4a.yapper-stage/
+├── plan.json
+├── <chunk-hash>.mp3
+└── chapter_1.aac
+```
+
+Regression tests stub the HTTP boundary and must not contact FAL or OpenAI. Live provider checks are operational tests only because they spend money and depend on external account state.
 
 ## Design decision: own inference layer (Option C)
 
@@ -91,6 +138,8 @@ To achieve perceived real-time playback:
 - Load voice embeddings from individual `.safetensors` files (v1.0 format)
 - Run inference: text -> MisakiSwift G2P -> BERT encoding -> duration/prosody prediction -> decoder -> iSTFT -> PCM
 - Chunk long text into ≤510-token segments at sentence boundaries
+- Plan local and remote speech chunks after shared prose preprocessing
+- Resolve remote credential source metadata without exposing secret values
 - Manage voice selection (enumerate, load, filter by accent/gender)
 - Provide word-level timestamps for each utterance
 - Output raw PCM audio (`[Float]`, 24kHz, mono)
