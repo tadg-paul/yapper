@@ -45,24 +45,28 @@ For inline IPA in source text (without config), use the bracket syntax directly:
 
 Remote engines use the same `yapper.yaml` cascade as local conversion. Config values are the primary source and may be inline API keys or executable helper paths that print the key to stdout. Environment variables are fallbacks when the matching config key is absent. Helper paths are executed directly with no shell interpolation; relative helper paths are resolved from the input file's config directory.
 
-```yaml
-fal:
-  api-key: ./secrets/fal-generation-key
-  account-api-key: ./secrets/fal-account-key
+Remote speech settings live under the `yapper:` namespace because `script.yaml`/`yapper.yaml` is shared with First Folio. Provider-specific keys must not occupy the shared top-level namespace.
 
-openai:
-  api-key: ./secrets/openai-generation-key
-  admin-api-key: ./secrets/openai-admin-key
+```yaml
+yapper:
+  remote-speech:
+    fal:
+      api-key: ./secrets/fal-generation-key
+      account-api-key: ./secrets/fal-account-key
+
+    openai:
+      api-key: ./secrets/openai-generation-key
+      admin-api-key: ./secrets/openai-admin-key
 ```
 
 The four credential slots are independent:
 
 | Slot | Environment | Config |
 |------|-------------|--------|
-| FAL generation | `FAL_KEY` | `fal.api-key` |
-| FAL account/reporting | `FAL_ACCOUNT_KEY` | `fal.account-api-key` |
-| OpenAI generation | `OPENAI_API_KEY` | `openai.api-key` |
-| OpenAI admin/reporting | `OPENAI_SERVICE_KEY`, `OPENAI_ADMIN_KEY` | `openai.admin-api-key` |
+| FAL generation | `FAL_KEY` | `yapper.remote-speech.fal.api-key` |
+| FAL account/reporting | `FAL_ACCOUNT_KEY` | `yapper.remote-speech.fal.account-api-key` |
+| OpenAI generation | `OPENAI_API_KEY` | `yapper.remote-speech.openai.api-key` |
+| OpenAI admin/reporting | `OPENAI_SERVICE_KEY`, `OPENAI_ADMIN_KEY` | `yapper.remote-speech.openai.admin-api-key` |
 
 Dry-run and verbose output report only the source type, such as `config literal`, `helper`, or `env`; resolved secret values are not printed. Account/admin credentials are optional reporting credentials and do not fall back to generation keys by default.
 

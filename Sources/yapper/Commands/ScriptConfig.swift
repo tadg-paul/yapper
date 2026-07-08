@@ -40,6 +40,23 @@ struct OpenAIRemoteConfig: Decodable {
     }
 }
 
+struct RemoteSpeechConfig: Decodable {
+    var fal: FALRemoteConfig?
+    var openai: OpenAIRemoteConfig?
+
+    enum CodingKeys: String, CodingKey {
+        case fal, openai
+    }
+}
+
+struct YapperConfig: Decodable {
+    var remoteSpeech: RemoteSpeechConfig?
+
+    enum CodingKeys: String, CodingKey {
+        case remoteSpeech = "remote-speech"
+    }
+}
+
 struct ScriptConfig: Decodable {
     var title: String?
     var subtitle: String?
@@ -69,8 +86,7 @@ struct ScriptConfig: Decodable {
 
     // Pronunciation substitutions: applied to text before synthesis
     var speechSubstitution: [String: String]?
-    var fal: FALRemoteConfig?
-    var openai: OpenAIRemoteConfig?
+    var yapper: YapperConfig?
 
     enum CodingKeys: String, CodingKey {
         case title, subtitle, author, threads, render
@@ -87,7 +103,7 @@ struct ScriptConfig: Decodable {
         case introVoice = "intro-voice"
         case renderFootnotes = "render-footnotes"
         case speechSubstitution = "speech-substitution"
-        case fal, openai
+        case yapper
     }
 
     // Resolved accessors — prefer nested render block, fall back to legacy flat keys
@@ -210,17 +226,25 @@ struct ScriptConfig: Decodable {
             for (k, v) in overrideSubs { merged[k] = v }
             result.speechSubstitution = merged
         }
-        if let overrideFAL = override.fal {
-            var merged = result.fal ?? FALRemoteConfig()
+        if let overrideFAL = override.yapper?.remoteSpeech?.fal {
+            var remote = result.yapper?.remoteSpeech ?? RemoteSpeechConfig()
+            var merged = remote.fal ?? FALRemoteConfig()
             if let v = overrideFAL.apiKey { merged.apiKey = v }
             if let v = overrideFAL.accountAPIKey { merged.accountAPIKey = v }
-            result.fal = merged
+            remote.fal = merged
+            var yapperConfig = result.yapper ?? YapperConfig()
+            yapperConfig.remoteSpeech = remote
+            result.yapper = yapperConfig
         }
-        if let overrideOpenAI = override.openai {
-            var merged = result.openai ?? OpenAIRemoteConfig()
+        if let overrideOpenAI = override.yapper?.remoteSpeech?.openai {
+            var remote = result.yapper?.remoteSpeech ?? RemoteSpeechConfig()
+            var merged = remote.openai ?? OpenAIRemoteConfig()
             if let v = overrideOpenAI.apiKey { merged.apiKey = v }
             if let v = overrideOpenAI.adminAPIKey { merged.adminAPIKey = v }
-            result.openai = merged
+            remote.openai = merged
+            var yapperConfig = result.yapper ?? YapperConfig()
+            yapperConfig.remoteSpeech = remote
+            result.yapper = yapperConfig
         }
 
         return result

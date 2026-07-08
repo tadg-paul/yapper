@@ -597,7 +597,9 @@ struct ConvertCommand: ParsableCommand {
                 config: config,
                 resolver: resolver
             ) else {
-                throw ValidationError("FAL generation credential not configured. Set FAL_KEY or fal.api-key.")
+                throw ValidationError(
+                    "FAL generation credential not configured. Set yapper.remote-speech.fal.api-key or FAL_KEY."
+                )
             }
             let client = FALSpeechClient(settings: try falSettings(), credential: credential)
             return try runAsyncAndBlock {
@@ -609,7 +611,9 @@ struct ConvertCommand: ParsableCommand {
                 config: config,
                 resolver: resolver
             ) else {
-                throw ValidationError("OpenAI generation credential not configured. Set OPENAI_API_KEY or openai.api-key.")
+                throw ValidationError(
+                    "OpenAI generation credential not configured. Set yapper.remote-speech.openai.api-key or OPENAI_API_KEY."
+                )
             }
             let client = OpenAISpeechClient(settings: try openAISettings(), credential: credential)
             return try runAsyncAndBlock {
@@ -753,12 +757,18 @@ struct ConvertCommand: ParsableCommand {
         case .fal:
             return try resolver.resolve(
                 slot: .falGeneration,
-                config: SpeechCredentialConfig(value: config.fal?.apiKey, baseDirectory: baseDirectory)
+                config: SpeechCredentialConfig(
+                    value: config.yapper?.remoteSpeech?.fal?.apiKey,
+                    baseDirectory: baseDirectory
+                )
             )
         case .openAI:
             return try resolver.resolve(
                 slot: .openAIGeneration,
-                config: SpeechCredentialConfig(value: config.openai?.apiKey, baseDirectory: baseDirectory)
+                config: SpeechCredentialConfig(
+                    value: config.yapper?.remoteSpeech?.openai?.apiKey,
+                    baseDirectory: baseDirectory
+                )
             )
         case .yapper, .f5:
             return nil
@@ -775,12 +785,18 @@ struct ConvertCommand: ParsableCommand {
         case .fal:
             return try resolver.resolve(
                 slot: .falAccount,
-                config: SpeechCredentialConfig(value: config.fal?.accountAPIKey, baseDirectory: baseDirectory)
+                config: SpeechCredentialConfig(
+                    value: config.yapper?.remoteSpeech?.fal?.accountAPIKey,
+                    baseDirectory: baseDirectory
+                )
             )
         case .openAI:
             return try resolver.resolve(
                 slot: .openAIAdmin,
-                config: SpeechCredentialConfig(value: config.openai?.adminAPIKey, baseDirectory: baseDirectory)
+                config: SpeechCredentialConfig(
+                    value: config.yapper?.remoteSpeech?.openai?.adminAPIKey,
+                    baseDirectory: baseDirectory
+                )
             )
         case .yapper, .f5:
             return nil

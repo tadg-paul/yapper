@@ -91,7 +91,7 @@ Remote prose conversion uses provider-specific chunk constraints instead of Koko
 
 Older standalone `tts-fal` and `tts-openai` shell prototypes are not the canonical implementation for Yapper text transformation, chunking, dry-run rendering, or audiobook conversion. They should be treated as deprecated wrappers or operational references; new prose conversion work belongs in `yapper convert`.
 
-Remote credentials should normally be configured in `yapper.yaml` as inline values or executable helper paths. Environment variables are supported only as fallback when the matching YAML key is absent.
+Remote credentials should normally be configured under `yapper.remote-speech` in `yapper.yaml` as inline values or executable helper paths. Environment variables are supported only as fallback when the matching YAML key is absent. The `yapper:` namespace keeps provider-specific speech settings out of the shared First Folio top-level config.
 
 ### Remote engine flags
 

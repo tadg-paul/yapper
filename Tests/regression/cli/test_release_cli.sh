@@ -111,6 +111,29 @@ test_release_convert_openai_dry_run_plan() {
 }
 run_test "RT-41.4" "OpenAI convert dry-run shows transformed provider chunk plan" test_release_convert_openai_dry_run_plan
 
+test_release_convert_remote_credentials_nested_config() {
+    local dir input helper output
+    dir=$(mktemp -d)
+    input="${dir}/remote.md"
+    helper="${dir}/print-key"
+    printf 'A small phrase.' > "${input}"
+    printf '#!/usr/bin/env bash\nprintf test-key\n' > "${helper}"
+    chmod +x "${helper}"
+    cat > "${dir}/yapper.yaml" <<EOF
+yapper:
+  remote-speech:
+    openai:
+      api-key: ./print-key
+EOF
+    output=$("${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Generation credential: helper:' || return 1
+    printf '%s' "${output}" | grep -q 'print-key' || return 1
+    if printf '%s' "${output}" | grep -q 'test-key'; then
+        return 1
+    fi
+}
+run_test "RT-41.25" "remote credentials resolve from nested yapper config helper" test_release_convert_remote_credentials_nested_config
+
 test_release_script_dry_run_structure() {
     local fixtures output
     fixtures="$(cd "${SCRIPT_DIR}/../../fixtures" && pwd)"
