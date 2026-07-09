@@ -1,0 +1,28 @@
+included:
+  - Sources
+  - Tests/regression
+
+excluded:
+  - .build
+  - .swiftpm
+  - .agent
+  - Tests/one_off
+
+disabled_rules:
+  - control_statement
+  - cyclomatic_complexity
+  - file_length
+  - for_where
+  - function_body_length
+  - function_parameter_count
+  - identifier_name
+  - implicit_optional_initialization
+  - large_tuple
+  - line_length
+  - nesting
+  - shorthand_operator
+  - statement_position
+  - todo
+  - trailing_comma
+  - trailing_newline
+  - type_body_length
