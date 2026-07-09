@@ -37,7 +37,8 @@ lint: ## Run linter
 	@if command -v swiftlint >/dev/null 2>&1; then \
 		swiftlint lint --quiet; \
 	else \
-		echo "swiftlint not found, skipping lint"; \
+		echo "Error: swiftlint is required. Install it with: brew install swiftlint"; \
+		exit 1; \
 	fi
 
 test: test-framework test-cli ## Run release-safe regression tests
