@@ -193,8 +193,8 @@ struct RemoteSpeechTests {
     @Test("RT-41.9 and RT-41.12: FAL reporter returns pricing estimate and balance diagnostics")
     func falReporterReturnsPricingAndBalance() async {
         let httpClient = FakeSpeechHTTPClient()
-        await httpClient.enqueueJSON(#"{"prices":[{"endpoint_id":"fal-ai/elevenlabs/tts/multilingual-v2","unit_price":0.18,"unit":"1000 characters","currency":"usd"}]}"#)
-        await httpClient.enqueueJSON(#"{"credits":{"current_balance":12.5,"currency":"usd"}}"#)
+        await httpClient.enqueueJSON(#"{"prices":[{"endpoint_id":"fal-ai/elevenlabs/tts/multilingual-v2","unit_price":"0.18","unit":"1000 characters","currency":"usd"}]}"#)
+        await httpClient.enqueueJSON(#"{"credits":{"current_balance":"12.5","currency":"usd"}}"#)
         let credential = ResolvedSpeechCredential(
             value: "fal-account-secret",
             sourceKind: .environment,
@@ -245,6 +245,32 @@ struct RemoteSpeechTests {
         })
     }
 
+    @Test("RT-44.4: FAL reporter identifies authenticated account responses without balance fields")
+    func falReporterIdentifiesAuthenticatedBalanceResponseWithoutBalance() async {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueJSON(#"{"prices":[{"endpoint_id":"fal-ai/elevenlabs/tts/multilingual-v2","unit_price":"0.1","unit":"1000 characters","currency":"USD"}]}"#)
+        await httpClient.enqueueJSON(#"{"username":"example-user"}"#)
+        let credential = ResolvedSpeechCredential(
+            value: "fal-account-secret",
+            sourceKind: .environment,
+            sourceDescription: "FAL_ACCOUNT_KEY"
+        )
+        let reporter = FALAccountReporter(
+            baseURL: URL(string: "https://api.fal.example.test")!,
+            credential: credential,
+            httpClient: httpClient
+        )
+
+        let diagnostics = await reporter.dryRunDiagnostics(
+            endpoint: "fal-ai/elevenlabs/tts/multilingual-v2",
+            characterCount: 22
+        )
+
+        #expect(diagnostics.contains {
+            $0.label == "FAL account balance" && $0.value == "authenticated, balance unavailable"
+        })
+    }
+
     @Test("RT-41.15 and RT-41.35: OpenAI reporter keeps partial usage when costs fail")
     func openAIReporterKeepsPartialUsageWhenCostsFail() async {
         let httpClient = FakeSpeechHTTPClient()
@@ -268,6 +294,29 @@ struct RemoteSpeechTests {
         })
         #expect(diagnostics.contains {
             $0.label == "OpenAI organization costs" && $0.value.contains("unavailable")
+        })
+    }
+
+    @Test("RT-44.3: OpenAI reporter accepts string-valued cost amounts")
+    func openAIReporterAcceptsStringValuedCostAmounts() async {
+        let httpClient = FakeSpeechHTTPClient()
+        await httpClient.enqueueJSON(#"{"data":[{"results":[{"characters":1200,"num_model_requests":3}]}]}"#)
+        await httpClient.enqueueJSON(#"{"data":[{"results":[{"amount":{"value":"0.1234","currency":"usd"}}]}]}"#)
+        let credential = ResolvedSpeechCredential(
+            value: "openai-admin-secret",
+            sourceKind: .environment,
+            sourceDescription: "OPENAI_ADMIN_KEY"
+        )
+        let reporter = OpenAIAdminReporter(
+            baseURL: URL(string: "https://api.openai.example.test/v1")!,
+            credential: credential,
+            httpClient: httpClient
+        )
+
+        let diagnostics = await reporter.usageAndCostDiagnostics()
+
+        #expect(diagnostics.contains {
+            $0.label == "OpenAI organization costs" && $0.value.contains("last 24h 0.1234 usd")
         })
     }
 }

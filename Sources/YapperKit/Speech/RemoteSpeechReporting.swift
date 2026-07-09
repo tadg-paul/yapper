@@ -85,6 +85,9 @@ public struct FALAccountReporter: Sendable {
         let data = try await get(path: "/v1/account/billing", queryItems: [])
         let decoded = try JSONDecoder().decode(FALBillingResponse.self, from: data)
         guard let balance = decoded.credits?.currentBalance else {
+            if decoded.username != nil {
+                return RemoteSpeechDiagnostic(label: label, value: "authenticated, balance unavailable")
+            }
             return RemoteSpeechDiagnostic(label: label, value: "unavailable")
         }
         return RemoteSpeechDiagnostic(label: label, value: "\(balance) \(decoded.credits?.currency ?? "usd")")
@@ -237,6 +240,14 @@ private struct FALPrice: Decodable {
         case unitPrice = "unit_price"
         case unit, currency
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpointID = try container.decodeIfPresent(String.self, forKey: .endpointID)
+        unitPrice = try container.decode(FlexibleDouble.self, forKey: .unitPrice).value
+        unit = try container.decodeIfPresent(String.self, forKey: .unit)
+        currency = try container.decodeIfPresent(String.self, forKey: .currency)
+    }
 }
 
 private struct FALBillingResponse: Decodable {
@@ -248,9 +259,16 @@ private struct FALBillingResponse: Decodable {
             case currentBalance = "current_balance"
             case currency
         }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            currentBalance = try container.decodeIfPresent(FlexibleDouble.self, forKey: .currentBalance)?.value
+            currency = try container.decodeIfPresent(String.self, forKey: .currency)
+        }
     }
 
     let credits: Credits?
+    let username: String?
 }
 
 private struct FALBillingEventsResponse: Decodable {
@@ -280,6 +298,14 @@ private struct FALBillingEvent: Decodable {
         case outputUnits = "output_units"
         case createdAt = "created_at"
         case timestamp
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpointID = try container.decodeIfPresent(String.self, forKey: .endpointID)
+        outputUnits = try container.decodeIfPresent(FlexibleDouble.self, forKey: .outputUnits)?.value
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
     }
 }
 
@@ -313,9 +339,39 @@ private struct OpenAICostResult: Decodable {
     struct Amount: Decodable {
         let currency: String?
         let value: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case currency, value
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            currency = try container.decodeIfPresent(String.self, forKey: .currency)
+            value = try container.decodeIfPresent(FlexibleDouble.self, forKey: .value)?.value
+        }
     }
 
     let amount: Amount?
+}
+
+private struct FlexibleDouble: Decodable {
+    let value: Double
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let doubleValue = try? container.decode(Double.self) {
+            value = doubleValue
+            return
+        }
+        let stringValue = try container.decode(String.self)
+        guard let doubleValue = Double(stringValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected numeric value or numeric string"
+            )
+        }
+        value = doubleValue
+    }
 }
 
 private func safeReportingBody(_ data: Data) -> String {
@@ -324,4 +380,3 @@ private func safeReportingBody(_ data: Data) -> String {
     guard trimmed.count > 500 else { return trimmed }
     return String(trimmed.prefix(500))
 }
-
