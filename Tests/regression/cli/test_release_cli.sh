@@ -403,4 +403,14 @@ test_release_yap_dispatch() {
 }
 run_test "FAST-CLI.5" "yap dispatch routes to speak dry-run" test_release_yap_dispatch
 
+test_release_public_help_hides_poc_commands() {
+    local output
+    output=$("${YAPPER}" --help 2>&1)
+    printf '%s' "${output}" | grep -q '^SUBCOMMANDS:' || return 1
+    if printf '%s' "${output}" | grep -q 'context-poc'; then
+        return 1
+    fi
+}
+run_test "FAST-CLI.6" "top-level help hides deprecated POC commands" test_release_public_help_hides_poc_commands
+
 summarise "release-safe CLI smoke"

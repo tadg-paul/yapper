@@ -43,7 +43,8 @@ let package = Package(
                 "YapperKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Yams", package: "Yams"),
-            ]
+            ],
+            exclude: ["Commands/ContextPOC.swift"]
         ),
         .testTarget(
             name: "YapperKitTests",

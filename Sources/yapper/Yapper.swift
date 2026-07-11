@@ -1,4 +1,4 @@
-// ABOUTME: CLI entry point for the yapper TTS tool. Dispatches to subcommands: speak, voices, convert.
+// ABOUTME: CLI entry point for the yapper TTS tool. Dispatches to public subcommands.
 // ABOUTME: Also handles the `yap` shorthand via argv[0] inspection when invoked via that symlink.
 
 import ArgumentParser
@@ -10,7 +10,7 @@ struct YapperCLI: ParsableCommand {
         commandName: "yapper",
         abstract: "Fast, Apple Silicon-native text-to-speech toolkit.",
         version: YapperKit.version,
-        subcommands: [SpeakCommand.self, VoicesCommand.self, ConvertCommand.self, ContextPOC.self]
+        subcommands: [SpeakCommand.self, VoicesCommand.self, ConvertCommand.self]
     )
 }
 
