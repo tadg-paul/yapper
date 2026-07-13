@@ -94,6 +94,42 @@ struct RemoteSpeechTests {
         #expect(!credential.redactedDescription.contains("helper-secret"))
     }
 
+    @Test("RT-47.28: canonical literal credentials are never interpreted as helper paths")
+    func canonicalLiteralCredentialRemainsLiteral() throws {
+        let resolver = SpeechCredentialResolver(environment: [:])
+        let credential = try #require(try resolver.resolve(
+            slot: .openAIGeneration,
+            config: SpeechCredentialConfig(
+                source: .literal("./not-a-helper.sh"),
+                baseDirectory: FileManager.default.temporaryDirectory
+            )
+        ))
+
+        #expect(credential.value == "./not-a-helper.sh")
+        #expect(credential.sourceKind == .configLiteral)
+    }
+
+    @Test("RT-47.29: canonical helper credentials resolve from the declaring directory")
+    func canonicalHelperUsesDeclaringDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let helper = directory.appendingPathComponent("print-key.sh")
+        try "#!/bin/sh\nprintf canonical-helper-secret".write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+
+        let resolver = SpeechCredentialResolver(environment: [:])
+        let credential = try #require(try resolver.resolve(
+            slot: .falGeneration,
+            config: SpeechCredentialConfig(source: .helper("./print-key.sh"), baseDirectory: directory)
+        ))
+
+        #expect(credential.value == "canonical-helper-secret")
+        #expect(credential.sourceKind == .helper)
+        #expect(credential.sourceDescription == helper.path)
+    }
+
     @Test("RT-41.33: FAL synthesis sends generation payload only when synthesis is invoked")
     func falClientPayloadIncludesContext() async throws {
         let httpClient = FakeSpeechHTTPClient()
