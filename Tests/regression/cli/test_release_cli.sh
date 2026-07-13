@@ -413,4 +413,6 @@ test_release_public_help_hides_poc_commands() {
 }
 run_test "FAST-CLI.6" "top-level help hides deprecated POC commands" test_release_public_help_hides_poc_commands
 
+source "${SCRIPT_DIR}/test_engine_config.sh"
+
 summarise "release-safe CLI smoke"
