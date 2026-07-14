@@ -30,6 +30,9 @@ struct VoicesCommand: ParsableCommand {
     @Flag(name: .long, help: "Use the full Stella passage for preview (default uses a shorter excerpt).")
     var full: Bool = false
 
+    @Flag(name: .long, help: "Show the resolved preview without performing synthesis.")
+    var dryRun: Bool = false
+
     func run() throws {
         let mergedConfig = try ScriptConfig.loadMerged(
             explicitPath: config,
@@ -47,33 +50,53 @@ struct VoicesCommand: ParsableCommand {
         }
 
         if let previewSpec = preview {
-            let engine = try YapperEngine(
-                modelPath: defaultModelPath(),
-                voicesPath: defaultVoicesPath()
-            )
-
-            // Determine which voices to preview
+            let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
             let voicesToPreview: [Voice]
             if previewSpec.lowercased() == "all" {
-                voicesToPreview = engine.voiceRegistry.voices
-            } else if let exact = engine.voiceRegistry.voices.first(where: { $0.name == previewSpec }) {
+                voicesToPreview = registry.voices
+            } else if let exact = registry.voices.first(where: { $0.name == previewSpec }) {
                 voicesToPreview = [exact]
             } else if previewSpec.count <= 3, let filter = VoiceAssigner.parseFilterPublic(previewSpec) {
-                let matched = engine.voiceRegistry.list(filter: filter)
+                let matched = registry.list(filter: filter)
                 if matched.isEmpty {
                     throw ValidationError("No voices match filter '\(previewSpec)'.")
                 }
                 voicesToPreview = matched
             } else {
-                let available = engine.voiceRegistry.voices.prefix(5).map(\.name).joined(separator: ", ")
+                let available = registry.voices.prefix(5).map(\.name).joined(separator: ", ")
                 throw ValidationError("Voice '\(previewSpec)' not found. Available: \(available)...")
             }
 
-            // Resolve the text to speak
-            let spokenText = resolvePreviewText()
+            let customText = resolvePreviewText()
+            let substitutions = mergedConfig.resolvedSpeechSubstitutions(engineID: .yapper)
+            if dryRun {
+                for voice in voicesToPreview {
+                    let spokenText = preprocessPreviewText(
+                        voice: voice,
+                        customText: customText,
+                        substitutions: substitutions
+                    )
+                    printPreviewDryRun(engineID: .yapper, voice: voice.name, text: spokenText)
+                }
+                return
+            }
 
+            let engine = try YapperEngine(
+                modelPath: defaultModelPath(),
+                voicesPath: defaultVoicesPath()
+            )
             for voice in voicesToPreview {
-                try previewVoice(engine: engine, voice: voice, text: spokenText)
+                let spokenText = preprocessPreviewText(
+                    voice: voice,
+                    customText: customText,
+                    substitutions: substitutions
+                )
+                try previewVoice(
+                    engine: engine,
+                    voice: voice,
+                    spokenText: spokenText,
+                    displayedText: customText ?? stellaText
+                )
             }
         } else if onePerLine {
             let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
@@ -139,6 +162,9 @@ struct VoicesCommand: ParsableCommand {
         if let config {
             arguments.append(contentsOf: ["--config", config])
         }
+        if dryRun {
+            arguments.append("--dry-run")
+        }
         arguments.append(resolvePreviewText() ?? stellaText)
         process.arguments = arguments
         process.standardInput = FileHandle.nullDevice
@@ -187,6 +213,26 @@ struct VoicesCommand: ParsableCommand {
         return "\(prefix). \(name)"
     }
 
+    private func preprocessPreviewText(
+        voice: Voice,
+        customText: String?,
+        substitutions: [String: String]
+    ) -> String {
+        let spokenText = "\(pronounceableName(voice)) here: \(customText ?? stellaText)"
+        return ProsePreprocessor.preprocess(
+            spokenText,
+            substitutions: substitutions,
+            supportsIPA: SpeechEngineCapabilities.yapper.supportsIPA
+        ).text
+    }
+
+    private func printPreviewDryRun(engineID: SpeechEngineID, voice: String, text: String) {
+        print("engine: \(engineID)")
+        print("voice:  \(voice)")
+        print("text:   \(text)")
+        print("(dry run — no synthesis performed)")
+    }
+
     private func listVoices(registry: VoiceRegistry) {
         let voices = registry.voices
 
@@ -213,17 +259,13 @@ struct VoicesCommand: ParsableCommand {
         print("\n\(voices.count) voices available.")
     }
 
-    private func previewVoice(engine: YapperEngine, voice: Voice, text customText: String?) throws {
-        let pName = pronounceableName(voice)
-
-        let spokenText: String
-        if let custom = customText {
-            spokenText = "\(pName) here: \(custom)"
-        } else {
-            spokenText = "\(pName) here: \(stellaText)"
-        }
-
-        fputs("\(voice.name) speaking: \(customText ?? stellaText)\n", stderr)
+    private func previewVoice(
+        engine: YapperEngine,
+        voice: Voice,
+        spokenText: String,
+        displayedText: String
+    ) throws {
+        fputs("\(voice.name) speaking: \(displayedText)\n", stderr)
 
         let result = try engine.synthesize(text: spokenText, voice: voice, speed: 1.0)
 
