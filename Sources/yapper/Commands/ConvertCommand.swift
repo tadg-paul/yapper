@@ -923,7 +923,10 @@ struct ConvertCommand: ParsableCommand {
         case "openai", "open-ai":
             return .openAI
         default:
-            throw ValidationError("Unsupported engine '\(selected)'. Use yapper, fal, openai.")
+            throw ValidationError(
+                "Unsupported engine '\(selected)' at yapper.engine. "
+                + "Registered engines: yapper, fal, openai."
+            )
         }
     }
 
@@ -962,6 +965,11 @@ struct ConvertCommand: ParsableCommand {
     }
 
     private func validateProviderOptions(for engineKind: SpeechEngineKind) throws {
+        let enginePath = "yapper.engines.\(engineKind.id.rawValue)"
+        if let concurrency = threads, concurrency < 1 {
+            let path = optionWasSpecified("--threads") ? "--threads" : "\(enginePath).concurrency"
+            throw ValidationError("\(path) must be at least 1.")
+        }
         if engineKind != .openAI, optionWasSpecified("--instructions") {
             throw ValidationError("--instructions is only valid with --engine openai.")
         }
@@ -984,25 +992,42 @@ struct ConvertCommand: ParsableCommand {
             throw ValidationError("FAL-specific options require --engine fal.")
         }
         if engineKind == .fal {
-            guard (0...1).contains(stability), (0...1).contains(similarityBoost) else {
-                throw ValidationError("FAL stability and similarity boost must be between 0 and 1.")
+            guard (0...1).contains(stability) else {
+                throw ValidationError("\(enginePath).stability must be between 0 and 1.")
+            }
+            guard (0...1).contains(similarityBoost) else {
+                throw ValidationError("\(enginePath).similarity-boost must be between 0 and 1.")
             }
             if let style, !(0...1).contains(style) {
-                throw ValidationError("FAL style must be between 0 and 1.")
+                throw ValidationError("\(enginePath).style must be between 0 and 1.")
             }
             guard (0.7...1.2).contains(Double(speed)) else {
-                throw ValidationError("FAL speed must be between 0.7 and 1.2.")
+                throw ValidationError("\(enginePath).speed must be between 0.7 and 1.2.")
+            }
+            let falFormats = [
+                "mp3_22050_32", "mp3_44100_32", "mp3_44100_64", "mp3_44100_96",
+                "mp3_44100_128", "mp3_44100_192", "pcm_8000", "pcm_16000",
+                "pcm_22050", "pcm_24000", "pcm_32000", "pcm_44100", "pcm_48000",
+                "ulaw_8000", "alaw_8000", "opus_48000_32", "opus_48000_64",
+                "opus_48000_96", "opus_48000_128", "opus_48000_192"
+            ]
+            guard falFormats.contains(falOutputFormat) else {
+                throw ValidationError("Invalid value at \(enginePath).output-format: \(falOutputFormat).")
             }
             guard ["auto", "on", "off"].contains(textNormalization) else {
-                throw ValidationError("FAL text normalization must be auto, on, or off.")
+                throw ValidationError(
+                    "\(enginePath).text-normalization must be auto, on, or off."
+                )
             }
         }
         if engineKind == .openAI {
             guard (0.25...4.0).contains(Double(speed)) else {
-                throw ValidationError("OpenAI speed must be between 0.25 and 4.0.")
+                throw ValidationError("\(enginePath).speed must be between 0.25 and 4.0.")
             }
             guard ["mp3", "opus", "aac", "flac", "wav", "pcm"].contains(openaiFormat) else {
-                throw ValidationError("OpenAI response format must be mp3, opus, aac, flac, wav, or pcm.")
+                throw ValidationError(
+                    "\(enginePath).output-format must be mp3, opus, aac, flac, wav, or pcm."
+                )
             }
             if (openaiModel == "tts-1" || openaiModel == "tts-1-hd"), instructions != nil {
                 throw ValidationError("--instructions is not supported by OpenAI models tts-1 or tts-1-hd.")
