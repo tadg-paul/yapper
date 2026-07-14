@@ -29,7 +29,7 @@ struct SpeechConfigurationTests {
 
         let settings = try registry.decode(
             CustomSettings.self,
-            engineID: configuration.selectedEngineID,
+            engineID: try #require(configuration.selectedEngineID),
             options: try #require(configuration.engines["custom"]?.options)
         )
 

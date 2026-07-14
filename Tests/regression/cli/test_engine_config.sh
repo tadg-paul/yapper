@@ -60,6 +60,29 @@ YAML
 }
 run_test "RT-47.5" "CLI overrides explicit, project, and global engine settings" test_config_precedence_and_canonical_warning
 
+test_explicit_builtin_value_beats_config() {
+    local dir home input config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    input="${dir}/chapter.md"
+    config="${dir}/config.yaml"
+    printf 'Text.' > "${input}"
+    cat > "${config}" <<'YAML'
+yapper:
+  engines:
+    openai:
+      speed: 1.3
+      model: tts-1-hd
+YAML
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" \
+        --engine openai --config "${config}" --speed 1.0 --openai-model gpt-4o-mini-tts \
+        --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Speed: 1.0' || return 1
+    printf '%s' "${output}" | grep -q 'Model: gpt-4o-mini-tts' || return 1
+}
+run_test "RT-47.5b" "explicit built-in values still override config" test_explicit_builtin_value_beats_config
+
 test_unselected_future_engine_config() {
     local dir home input output
     dir=$(mktemp -d)
@@ -133,3 +156,73 @@ test_remote_speak_dry_run() {
     printf '%s' "${output}" | grep -q 'text:.*Remote speech.' || return 1
 }
 run_test "RT-46.5" "speak dry-run uses selected remote engine" test_remote_speak_dry_run
+
+test_remote_script_dry_run_uses_provider_roles() {
+    local dir home input config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    input="${dir}/play.md"
+    config="${dir}/config.yaml"
+    cat > "${input}" <<'MARKDOWN'
+# Test Play
+
+## Scene One
+
+**ALICE:**
+Hello, Bob.
+
+**BOB:**
+Hello, Alice.
+MARKDOWN
+    cat > "${config}" <<'YAML'
+yapper:
+  engine: openai
+  engines:
+    openai:
+      voice: alloy
+  script:
+    voices:
+      openai:
+        narrator: ash
+        intro: coral
+        characters:
+          ALICE: nova
+          BOB: sage
+YAML
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" \
+        --config "${config}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'Engine: openai' || return 1
+    printf '%s' "${output}" | grep -q 'ALICE: nova' || return 1
+    printf '%s' "${output}" | grep -q 'BOB: sage' || return 1
+    printf '%s' "${output}" | grep -q 'Narrator (stage directions): ash' || return 1
+    printf '%s' "${output}" | grep -q 'Introduction: coral' || return 1
+}
+run_test "RT-46.7" "explicit config selects remote script roles" test_remote_script_dry_run_uses_provider_roles
+
+test_provider_voice_listing_uses_configured_catalogue() {
+    local dir home config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    config="${dir}/config.yaml"
+    cat > "${config}" <<'YAML'
+yapper:
+  engine: fal
+  engines:
+    fal:
+      voice: Rachel
+  script:
+    voices:
+      fal:
+        pool: [Aria, Roger]
+        narrator: Rachel
+YAML
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" voices \
+        --config "${config}" --engine fal 2>&1)
+    printf '%s' "${output}" | grep -q 'Configured voices for fal' || return 1
+    printf '%s' "${output}" | grep -q 'Aria' || return 1
+    printf '%s' "${output}" | grep -q 'Roger' || return 1
+    printf '%s' "${output}" | grep -q 'provider catalogue discovery is unavailable' || return 1
+}
+run_test "RT-46.43" "voices describes configured-only provider catalogues" test_provider_voice_listing_uses_configured_catalogue

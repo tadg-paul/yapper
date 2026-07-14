@@ -24,11 +24,17 @@ struct SpeakCommand: ParsableCommand {
     @Option(name: .long, help: "Voice name (e.g. af_heart, bm_daniel). Default: af_heart.")
     var voice: String?
 
+    @Option(name: .long, help: "Speech engine: yapper (default), fal, openai.")
+    var engine: String?
+
+    @Option(name: .long, help: "Explicit Yapper configuration file.")
+    var config: String?
+
     @Flag(name: .long, help: "Use a random voice instead of the default.")
     var randomVoice: Bool = false
 
     @Option(name: .long, help: "Speech speed multiplier (default: 1.0).")
-    var speed: Float = 1.0
+    var speed: Float?
 
     @Flag(name: .long, help: "Print resolved voice, speed, and text without performing synthesis.")
     var dryRun: Bool = false
@@ -40,7 +46,20 @@ struct SpeakCommand: ParsableCommand {
         let rawText = try resolveInputText()
 
         // Load config cascade for substitutions
-        let mergedConfig = ScriptConfig.loadMerged()
+        let mergedConfig = try ScriptConfig.loadMerged(
+            explicitPath: config,
+            inputDir: FileManager.default.currentDirectoryPath
+        )
+        let selectedEngine = SpeechEngineID(engine ?? mergedConfig.selectedEngine ?? "yapper")
+        let supportedEngines: [SpeechEngineID] = [.yapper, .fal, .openAI]
+        guard supportedEngines.contains(selectedEngine) else {
+            throw ValidationError(
+                "Unsupported engine '\(selectedEngine)'. Use yapper, fal, openai."
+            )
+        }
+        let configuredEngine = mergedConfig.engineConfig(selectedEngine.rawValue)
+        let resolvedSpeed = speed ?? configuredEngine?.speed ?? 1
+        let configuredVoice = configuredEngine?.voice
         let substitutions = mergedConfig.speechSubstitution ?? [:]
         let inputText = ProsePreprocessor.preprocess(
             rawText,
@@ -50,12 +69,29 @@ struct SpeakCommand: ParsableCommand {
         // Dry-run path: load only the voice registry (cheap, no 327MB model weights),
         // resolve the voice, print the resolved parameters, and exit without synthesising.
         if dryRun {
-            let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
-            let resolved = try resolveVoice(registry: registry)
-            print("voice:  \(resolved.name)")
-            print("speed:  \(speed)")
+            let resolvedVoice: String
+            if selectedEngine == .yapper {
+                let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
+                resolvedVoice = try resolveVoice(registry: registry, configuredVoice: configuredVoice).name
+            } else {
+                resolvedVoice = voice ?? configuredVoice ?? defaultVoice(for: selectedEngine)
+            }
+            print("engine: \(selectedEngine)")
+            print("voice:  \(resolvedVoice)")
+            print("speed:  \(resolvedSpeed)")
             print("text:   \(inputText)")
             print("(dry run — no synthesis performed)")
+            return
+        }
+
+        if selectedEngine != .yapper {
+            try runRemote(
+                engineID: selectedEngine,
+                text: inputText,
+                voice: voice ?? configuredVoice ?? defaultVoice(for: selectedEngine),
+                speed: Double(resolvedSpeed),
+                config: mergedConfig
+            )
             return
         }
 
@@ -63,7 +99,10 @@ struct SpeakCommand: ParsableCommand {
             modelPath: defaultModelPath(),
             voicesPath: defaultVoicesPath()
         )
-        let selectedVoice = try resolveVoice(registry: engine.voiceRegistry)
+        let selectedVoice = try resolveVoice(
+            registry: engine.voiceRegistry,
+            configuredVoice: configuredVoice
+        )
 
         // Look-ahead synthesis: synthesise chunk N+1 while chunk N plays.
         // Eliminates the audible gaps between chunks that occurred when synthesis
@@ -92,7 +131,7 @@ struct SpeakCommand: ParsableCommand {
 
         // For single-chunk input, no look-ahead needed — synthesise and play directly
         if chunks.count <= 1 {
-            try engine.stream(text: inputText, voice: selectedVoice, speed: speed) { chunk in
+            try engine.stream(text: inputText, voice: selectedVoice, speed: resolvedSpeed) { chunk in
                 guard !speakInterrupted else { return }
                 reporter.update(chunkText: chunks.first?.text ?? "")
                 let tmpPath = tmpDir.appendingPathComponent("yapper_speak_\(speakPid)_1.wav")
@@ -132,7 +171,7 @@ struct SpeakCommand: ParsableCommand {
             let synthQueue = DispatchQueue(label: "yapper.speak.synthesis")
             nonisolated(unsafe) let engineRef = engine
             let voiceRef = selectedVoice
-            let speedVal = speed
+            let speedVal = resolvedSpeed
             let inputRef = inputText
             let chunksRef = chunks
 
@@ -304,19 +343,12 @@ struct SpeakCommand: ParsableCommand {
     ///
     /// Invalid names from either --voice or $YAPPER_VOICE produce a clear error
     /// identifying the source — no silent fallback to random or any hardcoded voice.
-    private func resolveVoice(registry: VoiceRegistry) throws -> Voice {
+    private func resolveVoice(registry: VoiceRegistry, configuredVoice: String?) throws -> Voice {
         // 1. --voice CLI flag wins unconditionally
         if let voiceName = voice {
             return try lookupVoice(voiceName, in: registry, source: "--voice flag")
         }
-        // 2. $YAPPER_VOICE env var — whitespace-only treated as unset
-        if let raw = ProcessInfo.processInfo.environment["YAPPER_VOICE"] {
-            let trimmed = raw.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                return try lookupVoice(trimmed, in: registry, source: "$YAPPER_VOICE")
-            }
-        }
-        // 3. --random-voice flag: pick a random voice
+        // 2. --random-voice is an explicit CLI selection.
         if randomVoice {
             guard let chosen = registry.randomSystem() else {
                 throw ValidationError(
@@ -325,7 +357,18 @@ struct SpeakCommand: ParsableCommand {
             }
             return chosen
         }
-        // 4. Default: af_heart (highest fidelity)
+        // 3. Canonical or compatibility config.
+        if let configuredVoice {
+            return try lookupVoice(configuredVoice, in: registry, source: "Yapper config")
+        }
+        // 4. $YAPPER_VOICE fallback — whitespace-only treated as unset.
+        if let raw = ProcessInfo.processInfo.environment["YAPPER_VOICE"] {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty {
+                return try lookupVoice(trimmed, in: registry, source: "$YAPPER_VOICE")
+            }
+        }
+        // 5. Default: af_heart (highest fidelity)
         if let heart = registry.voices.first(where: { $0.name == "af_heart" }) {
             return heart
         }
@@ -337,6 +380,152 @@ struct SpeakCommand: ParsableCommand {
         return chosen
     }
 
+    private func defaultVoice(for engineID: SpeechEngineID) -> String {
+        switch engineID {
+        case .fal:
+            return "Rachel"
+        case .openAI:
+            return "alloy"
+        default:
+            return "af_heart"
+        }
+    }
+
+    private func runRemote(
+        engineID: SpeechEngineID,
+        text: String,
+        voice: String,
+        speed: Double,
+        config: ScriptConfig
+    ) throws {
+        let stagingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_speak_\(ProcessInfo.processInfo.processIdentifier)_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: stagingDirectory) }
+
+        let engine = try makeRemoteEngine(
+            engineID: engineID,
+            voice: voice,
+            speed: speed,
+            config: config,
+            stagingDirectory: stagingDirectory
+        )
+        let session = SpeechEngineSession(engine: engine)
+        let utterance = SpeechUtterance(
+            text: text,
+            sourceID: "stdin",
+            role: .narration,
+            voice: SpeechVoiceID(voice)
+        )
+        let assets = try runAsyncAndBlock {
+            try await session.synthesize([utterance])
+        }
+        for asset in assets {
+            guard case .encodedAudio(let file, _, _, _) = asset else {
+                throw ValidationError("Engine '\(engineID)' returned unsupported PCM for remote playback.")
+            }
+            try play(file)
+        }
+    }
+
+    private func makeRemoteEngine(
+        engineID: SpeechEngineID,
+        voice: String,
+        speed: Double,
+        config: ScriptConfig,
+        stagingDirectory: URL
+    ) throws -> any SpeechEngine {
+        let settings = config.engineConfig(engineID.rawValue)
+        let resolver = SpeechCredentialResolver()
+        switch engineID {
+        case .fal:
+            let credentialConfig = settings?.credentials?.generation?.credentialConfig
+                ?? SpeechCredentialConfig(
+                    value: config.yapper?.remoteSpeech?.fal?.apiKey,
+                    baseDirectory: nil
+                )
+            guard let credential = try resolver.resolve(slot: .falGeneration, config: credentialConfig) else {
+                throw ValidationError(
+                    "FAL generation credential not configured at yapper.engines.fal.credentials.generation or FAL_KEY."
+                )
+            }
+            return FALSpeechEngine(
+                settings: FALSpeechSettings(
+                    endpoint: settings?.endpoint ?? "fal-ai/elevenlabs/tts/multilingual-v2",
+                    voice: voice,
+                    outputFormat: settings?.outputFormat ?? "mp3_44100_128",
+                    stability: settings?.stability ?? 0.5,
+                    similarityBoost: settings?.similarityBoost ?? 0.75,
+                    style: settings?.style,
+                    speed: speed,
+                    languageCode: settings?.languageCode,
+                    textNormalization: settings?.textNormalization ?? "auto"
+                ),
+                credential: credential,
+                stagingDirectory: stagingDirectory,
+                concurrency: settings?.concurrency ?? 3
+            )
+        case .openAI:
+            let credentialConfig = settings?.credentials?.generation?.credentialConfig
+                ?? SpeechCredentialConfig(
+                    value: config.yapper?.remoteSpeech?.openai?.apiKey,
+                    baseDirectory: nil
+                )
+            guard let credential = try resolver.resolve(slot: .openAIGeneration, config: credentialConfig) else {
+                throw ValidationError(
+                    "OpenAI generation credential not configured at yapper.engines.openai.credentials.generation or OPENAI_API_KEY."
+                )
+            }
+            return OpenAISpeechEngine(
+                settings: OpenAISpeechSettings(
+                    model: settings?.model ?? "gpt-4o-mini-tts",
+                    voice: voice,
+                    responseFormat: settings?.outputFormat ?? "aac",
+                    speed: speed,
+                    instructions: settings?.instructions
+                ),
+                credential: credential,
+                stagingDirectory: stagingDirectory,
+                concurrency: settings?.concurrency ?? 3
+            )
+        default:
+            throw ValidationError("Engine '\(engineID)' is not a remote speech engine.")
+        }
+    }
+
+    private func play(_ file: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+        process.arguments = [file.path]
+        process.standardInput = FileHandle.nullDevice
+        speakCurrentAfplay = process
+        try process.run()
+        process.waitUntilExit()
+        speakCurrentAfplay = nil
+        guard process.terminationStatus == 0 else {
+            throw ValidationError("afplay exited with status \(process.terminationStatus).")
+        }
+    }
+
+    private func runAsyncAndBlock<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = SpeakAsyncResultBox<T>()
+        Task {
+            do {
+                box.result = .success(try await operation())
+            } catch {
+                box.result = .failure(error)
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        guard let result = box.result else {
+            throw ValidationError("Async speech operation ended without a result.")
+        }
+        return try result.get()
+    }
+
     private func lookupVoice(_ name: String, in registry: VoiceRegistry, source: String) throws -> Voice {
         guard let v = registry.voices.first(where: { $0.name == name }) else {
             let available = registry.voices.prefix(5).map(\.name).joined(separator: ", ")
@@ -346,4 +535,8 @@ struct SpeakCommand: ParsableCommand {
         }
         return v
     }
+}
+
+private final class SpeakAsyncResultBox<Value>: @unchecked Sendable {
+    var result: Result<Value, Error>?
 }

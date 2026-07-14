@@ -47,7 +47,7 @@ More dialogue.
 
 A markdown file is recognized as a script when:
 1. The file extension is `.md` or `.markdown`
-2. A `script.yaml` config file is present (either auto-discovered or via `--script-config`)
+2. Script mode is selected by project config, `--script`, or the deprecated `--script-config` alias
 3. At least 2 dialogue patterns (`**CHARACTER:**`) are found in the first 100 lines
 
 The pattern check uses the regex `^\*\*[A-Z\u00C0-\u024F][^*]*:?\*\*` with anchors matching lines. This matches:

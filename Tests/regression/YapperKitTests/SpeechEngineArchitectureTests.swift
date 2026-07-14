@@ -14,7 +14,9 @@ struct SpeechEngineArchitectureTests {
         registry.register(SpeechEngineDescriptor(
             id: "test-local",
             capabilities: .testLocal,
-            makeEngine: { TestSpeechEngine(recorder: recorder, signatureValue: "model-a") }
+            makeEngine: {
+                TestSpeechEngine(engineID: "test-local", recorder: recorder, signatureValue: "model-a")
+            }
         ))
 
         let session = try registry.makeSession(engineID: "test-local")
@@ -41,7 +43,11 @@ struct SpeechEngineArchitectureTests {
             capabilities: .testLocal,
             makeEngine: {
                 recorder.recordConstruction()
-                return TestSpeechEngine(recorder: recorder, signatureValue: "model-a")
+                return TestSpeechEngine(
+                    engineID: "persistent-local",
+                    recorder: recorder,
+                    signatureValue: "model-a"
+                )
             }
         ))
 
@@ -84,13 +90,96 @@ struct SpeechEngineArchitectureTests {
         registry.register(SpeechEngineDescriptor(
             id: .yapper,
             capabilities: .yapper,
-            makeEngine: { TestSpeechEngine(recorder: EngineRecorder(), signatureValue: "yapper") }
+            makeEngine: {
+                TestSpeechEngine(engineID: .yapper, recorder: EngineRecorder(), signatureValue: "yapper")
+            }
         ))
 
         #expect(throws: SpeechEngineRegistryError.self) {
             _ = try registry.makeSession(engineID: "absent")
         }
         #expect(registry.registeredEngineIDs == [.yapper])
+    }
+
+    @Test("RT-46.30: bounded engine concurrency is enforced without reordering assets")
+    func boundedConcurrencyPreservesOrder() async throws {
+        let probe = ConcurrencyProbe()
+        let session = SpeechEngineSession(engine: BoundedTestEngine(probe: probe))
+        let utterances = (0..<5).map { index in
+            SpeechUtterance(
+                text: "Line \(index)",
+                sourceID: String(index),
+                role: .narration,
+                voice: "voice"
+            )
+        }
+
+        let assets = try await session.synthesize(utterances)
+        let order = assets.compactMap { asset -> Int? in
+            guard case .pcm(let audio) = asset, let sample = audio.samples.first else { return nil }
+            return Int(sample)
+        }
+
+        let maximumActive = await probe.maximumActive
+        #expect(maximumActive == 2)
+        #expect(order == [0, 1, 2, 3, 4])
+    }
+}
+
+private actor ConcurrencyProbe {
+    private var active = 0
+    private(set) var maximumActive = 0
+
+    func begin() {
+        active += 1
+        maximumActive = max(maximumActive, active)
+    }
+
+    func end() {
+        active -= 1
+    }
+}
+
+private struct BoundedTestEngine: SpeechEngine {
+    let probe: ConcurrencyProbe
+    let id: SpeechEngineID = "bounded-test"
+    let capabilities = SpeechEngineCapabilities.testLocal
+    let executionPolicy = SpeechExecutionPolicy(mode: .boundedConcurrent, maximumConcurrency: 2)
+
+    func plan(_ utterance: SpeechUtterance) throws -> [PreparedSpeechChunk] {
+        [PreparedSpeechChunk(
+            chapterIndex: 0,
+            chapterTitle: utterance.sourceID,
+            sourcePath: utterance.sourceID,
+            chunkIndex: 0,
+            text: utterance.text,
+            previousText: nil,
+            nextText: nil,
+            characterCount: utterance.text.count,
+            boundaryBefore: "none",
+            containsParagraphBreak: false,
+            stableHash: utterance.sourceID,
+            engineID: id,
+            voiceID: utterance.voice,
+            semanticRole: utterance.role
+        )]
+    }
+
+    func synthesisSignature(for chunk: PreparedSpeechChunk) throws -> SpeechSynthesisSignature {
+        "bounded"
+    }
+
+    func synthesize(_ chunk: PreparedSpeechChunk) async throws -> SpeechSynthesisAsset {
+        await probe.begin()
+        let index = Int(chunk.sourcePath) ?? 0
+        do {
+            try await Task.sleep(for: .milliseconds((5 - index) * 5))
+            await probe.end()
+            return .pcm(AudioResult(samples: [Float(index)]))
+        } catch {
+            await probe.end()
+            throw error
+        }
     }
 }
 
@@ -121,10 +210,11 @@ private final class EngineRecorder: @unchecked Sendable {
 }
 
 private struct TestSpeechEngine: SpeechEngine {
+    let engineID: SpeechEngineID
     let recorder: EngineRecorder
     let signatureValue: String
 
-    var id: SpeechEngineID { "test-local" }
+    var id: SpeechEngineID { engineID }
     var capabilities: SpeechEngineCapabilities { .testLocal }
     var executionPolicy: SpeechExecutionPolicy { .persistentSerial }
 

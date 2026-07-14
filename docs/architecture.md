@@ -1,4 +1,4 @@
-<!-- Version: 0.5 | Last updated: 2026-07-08 -->
+<!-- Version: 0.6 | Last updated: 2026-07-14 -->
 
 # Yapper - Architecture
 
@@ -35,11 +35,11 @@ Yapper is a two-layer Swift system: **YapperKit** (library) and **yapper** (CLI)
 └──────────────────────────────────────────────────┘
 ```
 
-The diagram above shows the default native Kokoro/Yapper engine. API-backed engines are optional conversion backends selected with `yapper convert --engine fal` or `--engine openai`; the default `--engine yapper` path remains local and offline.
+The diagram above shows the default native Yapper engine, whose current implementation uses open-source Kokoro model weights. Kokoro is model provenance, not a public engine identity. Yapper, FAL, and OpenAI are peer engines selected for `speak`, prose conversion, script conversion, and voice preview; `yapper` remains local, offline, and the default.
 
 ## Speech planning and engine boundary
 
-All prose engines share a provider-neutral preparation boundary:
+All speech engines share an open, provider-neutral preparation boundary:
 
 1. Document ingestion and chapter detection produce ordered `Chapter` values.
 2. `ProsePreprocessor` applies markup cleanup, section-break handling, emphasis quoting, dialogue-dash conversion, intra-word hyphen normalization, and `speech-substitution` replacements.
@@ -49,23 +49,31 @@ All prose engines share a provider-neutral preparation boundary:
 
 Chunk constraints are engine-specific. Native Yapper delegates to `TextChunker` and the Kokoro 510-token budget. FAL and OpenAI use remote character/request constraints over the same transformed prose, so provider clients never parse raw Markdown.
 
-The synthesis boundary is local/remote neutral:
+The synthesis boundary is local/remote neutral and not a closed engine enum:
 
 ```swift
-public enum SpeechEngineKind {
-    case yapper
-    case fal
-    case openAI
-    case f5
+public struct SpeechEngineID: RawRepresentable, Hashable, Sendable {
+    public let rawValue: String
 }
 
-public enum SpeechSynthesisAsset {
+public protocol SpeechEngine: Sendable {
+    var id: SpeechEngineID { get }
+    var capabilities: SpeechEngineCapabilities { get }
+    var executionPolicy: SpeechExecutionPolicy { get }
+    func plan(_ utterance: SpeechUtterance) throws -> [PreparedSpeechChunk]
+    func synthesisSignature(for chunk: PreparedSpeechChunk) throws -> SpeechSynthesisSignature
+    func synthesize(_ chunk: PreparedSpeechChunk) async throws -> SpeechSynthesisAsset
+}
+
+public enum SpeechSynthesisAsset: Sendable {
     case pcm(AudioResult)
     case encodedAudio(file: URL, format: String, duration: TimeInterval?, metadata: [String: String])
 }
 ```
 
-This keeps API credentials, retry policy, and account reporting out of the base local synthesis contract and leaves room for a future local F5 engine that emits PCM but selects voices through reference audio rather than Kokoro embeddings.
+`SpeechEngineRegistry` resolves open identifiers to invocation-scoped factories. `SpeechEngineSession` retains one engine instance across planned chunks. Engine-owned opaque payloads and deterministic synthesis signatures allow a future F5 implementation to add reference profiles and model settings without changing document/script parsing, audio asset types, or a closed prepared-work enum.
+
+YapperKit owns the engine protocol, registry, planning values, built-in adapters, and audio assets. Its public synthesis path imports neither ArgumentParser nor Yams and does not discover Homebrew paths, user config, `afplay`, or `ffmpeg`. CLI and host applications inject model/resource paths, credentials, staging locations, and playback services. Legacy document/audiobook helpers that wrap macOS commands are platform-gated and report that a host adapter is required on iOS. The package declares macOS 15 and iOS 18 library support; native host applications can use the synthesis boundary without adopting the CLI.
 
 ### Remote provider behaviour
 
@@ -138,7 +146,8 @@ To achieve perceived real-time playback:
 - Load voice embeddings from individual `.safetensors` files (v1.0 format)
 - Run inference: text -> MisakiSwift G2P -> BERT encoding -> duration/prosody prediction -> decoder -> iSTFT -> PCM
 - Chunk long text into ≤510-token segments at sentence boundaries
-- Plan local and remote speech chunks after shared prose preprocessing
+- Plan local and API-backed speech chunks after shared prose preprocessing
+- Register or inject speech engines through the public open engine boundary
 - Resolve remote credential source metadata without exposing secret values
 - Manage voice selection (enumerate, load, filter by accent/gender)
 - Provide word-level timestamps for each utterance

@@ -3,7 +3,7 @@
 Fast, Apple Silicon-native text-to-speech powered by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) via [MLX Swift](https://github.com/ml-explore/mlx-swift). CLI tool and embeddable Swift library.
 
 - **Runs locally by default** - native Swift + Metal inference, no Python, no cloud, no internet required for the default engine
-- **Optional API-backed engines** - `yapper convert --engine fal` and `--engine openai` reuse the native planner and audiobook assembly when cloud voices are wanted
+- **Swappable speech engines** - native Yapper, FAL, and OpenAI can drive `speak`, prose conversion, script conversion, and voice preview through one engine boundary
 - **Multi-voice script reading** - convert plays and screenplays to audiobooks with distinct voices per character and narrator-read stage directions. Supports [org-mode](docs/format-org-mode.md), [markdown](docs/format-markdown.md), and [Fountain](docs/format-fountain.md) formats
 - **Audiobook generation** - M4B with chapter markers and metadata from epubs, PDFs, markdown, or multiple text files in one command
 - **28 built-in voices** - American and British, male and female, with voice preview and filter shorthands
@@ -46,7 +46,7 @@ See [docs/cli.md](docs/cli.md) for the full CLI guide.
 
 ### Configuration
 
-Yapper loads YAML config in a cascade: global (`~/.config/yapper/yapper.yaml`) > project (`./yapper.yaml`) > CLI (`--script-config`). Use it for pronunciation overrides, voice assignment, pacing, and optional remote API credentials.
+Yapper loads YAML config in a cascade: global (`~/.config/yapper/yapper.yaml`), project (`./yapper.yaml` or shared `./script.yaml`), then explicit `--config`. Later layers win. Use it for engine selection, pronunciation overrides, per-engine voice assignment, pacing, and optional API credentials. `--script-config` remains a deprecated compatibility alias for script conversion.
 
 ```yaml
 # ~/.config/yapper/yapper.yaml
@@ -116,7 +116,7 @@ The inference pipeline implements the full Kokoro-82M architecture (StyleTTS2-ba
 - Stage direction character names automatically Title Cased
 - Per-line audio trimming (Whisper-based or heuristic)
 - Policy-based text chunking for arbitrarily long input
-- Remote speech planning for FAL and OpenAI conversion backends
+- Swappable Yapper, FAL, and OpenAI engines for speaking, prose, scripts, and voice preview
 - Speed control (0.5x-2.0x) and word-level timestamps
 - `--dry-run`, `--non-interactive`, `--quiet` flags
 - Numerically identical output to [KokoroSwift](https://github.com/mlalma/kokoro-ios)

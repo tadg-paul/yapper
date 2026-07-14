@@ -6,6 +6,27 @@ import AVFoundation
 import Foundation
 import YapperKit
 
+private final class WorkerFailureCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failures: [String] = []
+
+    func append(_ failure: String) {
+        lock.withLock {
+            failures.append(failure)
+        }
+    }
+
+    func snapshot() -> [String] {
+        lock.withLock { failures }
+    }
+}
+
+private struct ResolvedScriptVoiceSet {
+    let characters: [String: String]
+    let narrator: String
+    let introduction: String
+}
+
 struct ConvertCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "convert",
@@ -31,7 +52,7 @@ struct ConvertCommand: ParsableCommand {
     var speed: Float = 1.0
 
     @Option(name: .long, help: "Speech engine: yapper (default), fal, openai.")
-    var engine: String = "yapper"
+    var engine: String?
 
     @Option(name: .long, help: "FAL endpoint for --engine fal.")
     var falEndpoint: String = "fal-ai/elevenlabs/tts/multilingual-v2"
@@ -93,6 +114,9 @@ struct ConvertCommand: ParsableCommand {
     @Option(name: .long, help: "Path to script.yaml config file for script-reading mode.")
     var scriptConfig: String?
 
+    @Option(name: .long, help: "Explicit Yapper configuration file.")
+    var config: String?
+
     @Flag(name: .long, help: "Force script mode using defaults (or global config). No script.yaml required.")
     var script: Bool = false
 
@@ -109,7 +133,9 @@ struct ConvertCommand: ParsableCommand {
     @Option(name: .long, help: .hidden)
     var workerOutput: String?
 
-    func run() throws {
+    private var commandConfig = ScriptConfig()
+
+    mutating func run() throws {
         // Worker mode: synthesise a single line and exit
         if let text = workerText, let voiceName = workerVoice, let outputPath = workerOutput {
             try runWorker(text: text, voiceName: voiceName, outputPath: outputPath)
@@ -119,6 +145,15 @@ struct ConvertCommand: ParsableCommand {
         guard !inputs.isEmpty else {
             throw ValidationError("No input files specified.")
         }
+        let inputDirectory = URL(fileURLWithPath: inputs[0]).deletingLastPathComponent().path
+        if scriptConfig != nil {
+            print("WARNING: deprecated option '--script-config'; use '--config' instead.")
+        }
+        commandConfig = try ScriptConfig.loadMerged(
+            explicitPath: config ?? scriptConfig,
+            inputDir: inputDirectory
+        )
+        applyCanonicalEngineDefaults()
         let selectedEngine = try resolveSpeechEngineKind()
         try validateProviderOptions(for: selectedEngine)
 
@@ -137,15 +172,17 @@ struct ConvertCommand: ParsableCommand {
         }
 
         // Script mode: detect config file, --script flag, or yapper.yaml with script keys
-        let hasScriptConfig = script || scriptConfig != nil || {
+        let hasScriptConfig = script
+            || scriptConfig != nil
+            || (config != nil && commandConfig.hasScriptSettings)
+            || {
             guard inputs.count == 1 else { return false }
             let dir = URL(fileURLWithPath: inputs[0]).deletingLastPathComponent().path
             if FileManager.default.fileExists(atPath: "\(dir)/script.yaml") { return true }
             // Also check yapper.yaml for script-specific keys
             if FileManager.default.fileExists(atPath: "\(dir)/yapper.yaml"),
                let config = try? ScriptConfig.load(from: "\(dir)/yapper.yaml"),
-               config.characterVoices != nil || config.narratorVoice != nil
-                   || config.render != nil || config.renderStageDirections != nil {
+               config.hasScriptSettings {
                 return true
             }
             return false
@@ -162,10 +199,9 @@ struct ConvertCommand: ParsableCommand {
                 if dryRun {
                     try printScriptDryRun(scriptDoc)
                 } else {
-                    guard selectedEngine == .yapper else {
-                        throw ValidationError(
-                            "Remote engines currently support prose conversion only; use native yapper for script mode."
-                        )
+                    if selectedEngine != .yapper {
+                        try runRemoteScriptMode(engineKind: selectedEngine, script: scriptDoc)
+                        return
                     }
                     let engine = try YapperEngine(
                         modelPath: defaultModelPath(),
@@ -283,8 +319,7 @@ struct ConvertCommand: ParsableCommand {
         let multiChapter = isMultiFile || chapters.count > 1
         let outputFormat = remoteOutputFormat(engineKind: engineKind, multiChapter: multiChapter)
         let outputPath = try resolveRemoteOutputPath(format: outputFormat, multiChapter: multiChapter)
-        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
-        let mergedConfig = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let mergedConfig = commandConfig
         let substitutions = mergedConfig.speechSubstitution ?? [:]
         let settingsSignature = try remoteSettingsSignature(engineKind: engineKind)
         let sources = chapters.enumerated().map { index, chapter in
@@ -341,6 +376,10 @@ struct ConvertCommand: ParsableCommand {
         ) where !quiet {
             fputs("\(diagnostic.label): \(diagnostic.value)\n", stderr)
         }
+        let speechEngine = try makeRemoteSpeechEngine(
+            engineKind: engineKind,
+            stagingDirectory: stage.directory
+        )
 
         var chunkFiles: [String: URL] = [:]
         for chunk in plan.chunks {
@@ -358,9 +397,7 @@ struct ConvertCommand: ParsableCommand {
             }
             let file = try synthesizeRemoteChunk(
                 chunk,
-                engineKind: engineKind,
-                config: mergedConfig,
-                stagingDirectory: stage.directory
+                engine: speechEngine
             )
             chunkFiles[chunk.stableHash] = file
             manifest.completed.append(RemoteSpeechStageRecord(
@@ -585,42 +622,57 @@ struct ConvertCommand: ParsableCommand {
 
     private func synthesizeRemoteChunk(
         _ chunk: PreparedSpeechChunk,
-        engineKind: SpeechEngineKind,
-        config: ScriptConfig,
-        stagingDirectory: URL
+        engine: any SpeechEngine
     ) throws -> URL {
+        let asset = try runAsyncAndBlock {
+            try await engine.synthesize(chunk)
+        }
+        guard case .encodedAudio(let file, _, _, _) = asset else {
+            throw ValidationError("Engine '\(engine.id)' returned PCM to encoded remote conversion.")
+        }
+        return file
+    }
+
+    private func makeRemoteSpeechEngine(
+        engineKind: SpeechEngineKind,
+        stagingDirectory: URL
+    ) throws -> any SpeechEngine {
         let resolver = SpeechCredentialResolver()
         switch engineKind {
         case .fal:
             guard let credential = try optionalRemoteGenerationCredential(
                 engineKind: .fal,
-                config: config,
+                config: commandConfig,
                 resolver: resolver
             ) else {
                 throw ValidationError(
-                    "FAL generation credential not configured. Set yapper.remote-speech.fal.api-key or FAL_KEY."
+                    "FAL generation credential not configured at yapper.engines.fal.credentials.generation or FAL_KEY."
                 )
             }
-            let client = FALSpeechClient(settings: try falSettings(), credential: credential)
-            return try runAsyncAndBlock {
-                try await client.synthesize(chunk, stagingDirectory: stagingDirectory)
-            }
+            return FALSpeechEngine(
+                settings: try falSettings(),
+                credential: credential,
+                stagingDirectory: stagingDirectory,
+                concurrency: commandConfig.engineConfig(SpeechEngineID.fal.rawValue)?.concurrency ?? 3
+            )
         case .openAI:
             guard let credential = try optionalRemoteGenerationCredential(
                 engineKind: .openAI,
-                config: config,
+                config: commandConfig,
                 resolver: resolver
             ) else {
                 throw ValidationError(
-                    "OpenAI generation credential not configured. Set yapper.remote-speech.openai.api-key or OPENAI_API_KEY."
+                    "OpenAI generation credential not configured at yapper.engines.openai.credentials.generation or OPENAI_API_KEY."
                 )
             }
-            let client = OpenAISpeechClient(settings: try openAISettings(), credential: credential)
-            return try runAsyncAndBlock {
-                try await client.synthesize(chunk, stagingDirectory: stagingDirectory)
-            }
+            return OpenAISpeechEngine(
+                settings: try openAISettings(),
+                credential: credential,
+                stagingDirectory: stagingDirectory,
+                concurrency: commandConfig.engineConfig(SpeechEngineID.openAI.rawValue)?.concurrency ?? 3
+            )
         case .yapper, .f5:
-            throw ValidationError("Remote synthesis is not available for engine \(engineKind.rawValue).")
+            throw ValidationError("Engine '\(engineKind.rawValue)' is not a remote speech engine.")
         }
     }
 
@@ -755,20 +807,22 @@ struct ConvertCommand: ParsableCommand {
         let baseDirectory = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
         switch engineKind {
         case .fal:
+            let canonical = config.engineConfig(SpeechEngineID.fal.rawValue)?
+                .credentials?.generation
             return try resolver.resolve(
                 slot: .falGeneration,
-                config: SpeechCredentialConfig(
+                config: canonical?.credentialConfig ?? SpeechCredentialConfig(
                     value: config.yapper?.remoteSpeech?.fal?.apiKey,
-                    baseDirectory: baseDirectory
-                )
+                    baseDirectory: baseDirectory)
             )
         case .openAI:
+            let canonical = config.engineConfig(SpeechEngineID.openAI.rawValue)?
+                .credentials?.generation
             return try resolver.resolve(
                 slot: .openAIGeneration,
-                config: SpeechCredentialConfig(
+                config: canonical?.credentialConfig ?? SpeechCredentialConfig(
                     value: config.yapper?.remoteSpeech?.openai?.apiKey,
-                    baseDirectory: baseDirectory
-                )
+                    baseDirectory: baseDirectory)
             )
         case .yapper, .f5:
             return nil
@@ -783,20 +837,22 @@ struct ConvertCommand: ParsableCommand {
         let baseDirectory = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
         switch engineKind {
         case .fal:
+            let canonical = config.engineConfig(SpeechEngineID.fal.rawValue)?
+                .credentials?.account
             return try resolver.resolve(
                 slot: .falAccount,
-                config: SpeechCredentialConfig(
+                config: canonical?.credentialConfig ?? SpeechCredentialConfig(
                     value: config.yapper?.remoteSpeech?.fal?.accountAPIKey,
-                    baseDirectory: baseDirectory
-                )
+                    baseDirectory: baseDirectory)
             )
         case .openAI:
+            let canonical = config.engineConfig(SpeechEngineID.openAI.rawValue)?
+                .credentials?.admin
             return try resolver.resolve(
                 slot: .openAIAdmin,
-                config: SpeechCredentialConfig(
+                config: canonical?.credentialConfig ?? SpeechCredentialConfig(
                     value: config.yapper?.remoteSpeech?.openai?.adminAPIKey,
-                    baseDirectory: baseDirectory
-                )
+                    baseDirectory: baseDirectory)
             )
         case .yapper, .f5:
             return nil
@@ -852,30 +908,69 @@ struct ConvertCommand: ParsableCommand {
     }
 
     private func resolveSpeechEngineKind() throws -> SpeechEngineKind {
-        switch engine.lowercased() {
-        case "yapper", "native", "kokoro":
+        let selected = engine ?? commandConfig.selectedEngine ?? SpeechEngineID.yapper.rawValue
+        switch selected.lowercased() {
+        case "yapper", "native":
             return .yapper
         case "fal":
             return .fal
         case "openai", "open-ai":
             return .openAI
         default:
-            throw ValidationError("Unsupported engine '\(engine)'. Use yapper, fal, or openai.")
+            throw ValidationError("Unsupported engine '\(selected)'. Use yapper, fal, openai.")
+        }
+    }
+
+    private mutating func applyCanonicalEngineDefaults() {
+        let selected = engine ?? commandConfig.selectedEngine ?? SpeechEngineID.yapper.rawValue
+        engine = selected
+        guard let settings = commandConfig.engineConfig(selected) else { return }
+        if voice == nil { voice = settings.voice }
+        if !optionWasSpecified("--speed"), let value = settings.speed { speed = value }
+        if threads == nil { threads = settings.concurrency }
+
+        switch selected {
+        case SpeechEngineID.fal.rawValue:
+            if !optionWasSpecified("--fal-endpoint"), let value = settings.endpoint {
+                falEndpoint = value
+            }
+            if !optionWasSpecified("--fal-output-format"), let value = settings.outputFormat {
+                falOutputFormat = value
+            }
+            if !optionWasSpecified("--stability"), let value = settings.stability { stability = value }
+            if !optionWasSpecified("--similarity-boost"), let value = settings.similarityBoost {
+                similarityBoost = value
+            }
+            if !optionWasSpecified("--style") { style = settings.style }
+            if !optionWasSpecified("--language-code") { languageCode = settings.languageCode }
+            if !optionWasSpecified("--text-normalization"), let value = settings.textNormalization {
+                textNormalization = value
+            }
+        case SpeechEngineID.openAI.rawValue:
+            if !optionWasSpecified("--openai-model"), let value = settings.model { openaiModel = value }
+            if !optionWasSpecified("--openai-format"), let value = settings.outputFormat { openaiFormat = value }
+            if !optionWasSpecified("--instructions") { instructions = settings.instructions }
+        default:
+            break
         }
     }
 
     private func validateProviderOptions(for engineKind: SpeechEngineKind) throws {
-        if engineKind != .openAI, instructions != nil {
+        if engineKind != .openAI, optionWasSpecified("--instructions") {
             throw ValidationError("--instructions is only valid with --engine openai.")
         }
         if engineKind != .fal {
-            if style != nil || languageCode != nil || falEndpoint != "fal-ai/elevenlabs/tts/multilingual-v2"
-                || falOutputFormat != "mp3_44100_128" || textNormalization != "auto" {
+            let options = [
+                "--fal-endpoint", "--fal-output-format", "--stability", "--similarity-boost",
+                "--style", "--language-code", "--text-normalization"
+            ]
+            if options.contains(where: optionWasSpecified) {
                 throw ValidationError("FAL-specific options require --engine fal.")
             }
         }
         if engineKind != .openAI {
-            if openaiModel != "gpt-4o-mini-tts" || openaiFormat != "aac" || openaiBaseURL != nil {
+            let options = ["--openai-model", "--openai-format", "--instructions"]
+            if options.contains(where: optionWasSpecified) || openaiBaseURL != nil {
                 throw ValidationError("OpenAI-specific options require --engine openai.")
             }
         }
@@ -906,6 +1001,12 @@ struct ConvertCommand: ParsableCommand {
             if (openaiModel == "tts-1" || openaiModel == "tts-1-hd"), instructions != nil {
                 throw ValidationError("--instructions is not supported by OpenAI models tts-1 or tts-1-hd.")
             }
+        }
+    }
+
+    private func optionWasSpecified(_ name: String) -> Bool {
+        CommandLine.arguments.contains { argument in
+            argument == name || argument.hasPrefix("\(name)=")
         }
     }
 
@@ -959,8 +1060,7 @@ struct ConvertCommand: ParsableCommand {
         let outputPath = resolveAudiobookOutputPath(format: outputFormat)
 
         // Load merged config for substitutions
-        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
-        let mergedConfig = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let mergedConfig = commandConfig
         let substitutions = mergedConfig.speechSubstitution ?? [:]
 
         // Resolve metadata
@@ -1051,8 +1151,7 @@ struct ConvertCommand: ParsableCommand {
     private func runChapterPerFileMode(engine: YapperEngine, chapters: [Chapter], format: String) throws {
         let voices = assignVoices(engine: engine, chapterCount: chapters.count)
         let (resolvedAuthor, resolvedTitle) = resolveMetadata(chapters: chapters)
-        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
-        let mergedConfig = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let mergedConfig = commandConfig
         let substitutions = mergedConfig.speechSubstitution ?? [:]
 
         // Derive output directory from -o flag or first input's directory
@@ -1155,8 +1254,7 @@ struct ConvertCommand: ParsableCommand {
         }
 
         // Load merged config for substitutions
-        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
-        let mergedConfig = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let mergedConfig = commandConfig
         let substitutions = mergedConfig.speechSubstitution ?? [:]
 
         let selectedVoice = try resolveVoice(engine: engine, voiceName: voice)
@@ -1244,6 +1342,7 @@ struct ConvertCommand: ParsableCommand {
 
         if dryRun {
             print("Would convert: \(input)")
+            print("  Engine: yapper")
             print("  Output: \(outputPath)")
             print("  Format: \(format)")
             print("  Voice: \(voice.name)")
@@ -1624,66 +1723,38 @@ struct ConvertCommand: ParsableCommand {
         guard inputs.count == 1 else { return nil }
         let inputPath = inputs[0]
 
-        // Load config from --script-config flag or auto-discover script.yaml
-        var config: ScriptConfig?
-        if let configPath = scriptConfig {
-            config = try ScriptConfig.load(from: configPath)
-        } else {
-            let dir = URL(fileURLWithPath: inputPath).deletingLastPathComponent().path
-            let autoPath = "\(dir)/script.yaml"
-            if FileManager.default.fileExists(atPath: autoPath) {
-                config = try ScriptConfig.load(from: autoPath)
-            }
-        }
-
-        // If no config and no --script-config flag, only parse if file has script patterns
-        return try ScriptParser.parse(filePath: inputPath, config: config)
+        return try ScriptParser.parse(filePath: inputPath, config: commandConfig)
     }
 
     /// Print dry-run output for script mode.
     private func printScriptDryRun(_ script: ScriptDocument) throws {
-        let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
-        let config = try loadScriptConfig()
-        let (charVoices, narrator) = VoiceAssigner.assign(
-            characters: script.characters,
-            config: config,
-            registry: registry,
-            narratorVoiceName: config?.narratorVoice
+        let config = commandConfig
+        let selectedEngine = try resolveSpeechEngineKind()
+        let voices = try resolveScriptVoices(
+            script: script,
+            engineKind: selectedEngine,
+            config: config
         )
 
-        let readStage = config?.resolvedRenderStageDirections ?? true
-        let renderIntro = config?.resolvedRenderFrontmatter ?? true
-        let renderFootnotes = config?.resolvedRenderFootnotes ?? true
-        let dryRunSubs = config?.speechSubstitution ?? [:]
+        let readStage = config.resolvedRenderStageDirections
+        let renderIntro = config.resolvedRenderFrontmatter
+        let renderFootnotes = config.resolvedRenderFootnotes
+        let dryRunSubs = config.speechSubstitution ?? [:]
         let knownChars = Set(script.characters)
 
-        // Resolve intro voice
-        let introVoiceName: String
-        if let spec = config?.introVoice {
-            if spec.contains("_"), let v = registry.voices.first(where: { $0.name == spec }) {
-                introVoiceName = v.name
-            } else if let filter = VoiceAssigner.parseFilterPublic(spec),
-                      let v = registry.list(filter: filter).first {
-                introVoiceName = v.name
-            } else {
-                introVoiceName = narrator.name
-            }
-        } else {
-            introVoiceName = narrator.name
-        }
-
         print("Script mode: \(script.title ?? "Untitled")")
+        print("  Engine: \(selectedEngine.rawValue)")
         if let subtitle = script.subtitle { print("  \(subtitle)") }
         if let author = script.author { print("  Author: \(author)") }
         print("")
         print("Cast:")
         for char in script.characters {
-            let voiceName = charVoices[char]?.name ?? "unassigned"
+            let voiceName = voices.characters[char] ?? "unassigned"
             print("  \(char): \(voiceName)")
         }
-        print("  Narrator (stage directions): \(narrator.name)")
+        print("  Narrator (stage directions): \(voices.narrator)")
         if renderIntro {
-            print("  Introduction: \(introVoiceName)")
+            print("  Introduction: \(voices.introduction)")
         }
         print("")
 
@@ -1713,7 +1784,7 @@ struct ConvertCommand: ParsableCommand {
             for entry in scene.entries.prefix(5) {
                 switch entry.type {
                 case .dialogue(let char):
-                    let voiceName = charVoices[char]?.name ?? "?"
+                    let voiceName = voices.characters[char] ?? "?"
                     var displayText = entry.text
                     if renderFootnotes || !script.footnotes.isEmpty {
                         let (stripped, _) = ScriptParser.stripFootnoteReferences(displayText)
@@ -1733,15 +1804,15 @@ struct ConvertCommand: ParsableCommand {
                         }
                         displayText = ScriptConfig.applySubstitutions(displayText, substitutions: dryRunSubs)
                         let preview = displayText.prefix(60)
-                        print("    [stage] (\(narrator.name)): \(preview)\(displayText.count > 60 ? "..." : "")")
+                        print("    [stage] (\(voices.narrator)): \(preview)\(displayText.count > 60 ? "..." : "")")
                     }
                 case .transition:
-                    let renderTransitions = config?.resolvedRenderTransitions ?? true
+                    let renderTransitions = config.resolvedRenderTransitions
                     if renderTransitions {
                         var displayText = entry.text
                         displayText = ScriptConfig.applySubstitutions(displayText, substitutions: dryRunSubs)
                         let preview = displayText.prefix(60)
-                        print("    [transition] (\(narrator.name)): \(preview)\(displayText.count > 60 ? "..." : "")")
+                        print("    [transition] (\(voices.narrator)): \(preview)\(displayText.count > 60 ? "..." : "")")
                     }
                 }
             }
@@ -1762,6 +1833,324 @@ struct ConvertCommand: ParsableCommand {
 
         print("")
         print("(dry run — no synthesis performed)")
+    }
+
+    private func resolveScriptVoices(
+        script: ScriptDocument,
+        engineKind: SpeechEngineKind,
+        config: ScriptConfig
+    ) throws -> ResolvedScriptVoiceSet {
+        if engineKind == .yapper {
+            let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
+            let (characters, narrator) = VoiceAssigner.assign(
+                characters: script.characters,
+                config: config,
+                registry: registry,
+                narratorVoiceName: config.narratorVoice
+            )
+            let intro: String
+            if let spec = config.introVoice {
+                if spec.contains("_"), registry.voices.contains(where: { $0.name == spec }) {
+                    intro = spec
+                } else if let filter = VoiceAssigner.parseFilterPublic(spec),
+                          let voice = registry.list(filter: filter).first {
+                    intro = voice.name
+                } else {
+                    intro = narrator.name
+                }
+            } else {
+                intro = narrator.name
+            }
+            return ResolvedScriptVoiceSet(
+                characters: characters.mapValues(\.name),
+                narrator: narrator.name,
+                introduction: intro
+            )
+        }
+
+        let engineID = engineKind.id
+        let roleConfig = config.scriptVoiceConfig(engineID.rawValue)
+        let baseVoice = config.engineConfig(engineID.rawValue)?.voice
+            ?? (engineKind == .fal ? "Rachel" : "alloy")
+        var characters = roleConfig?.characters ?? [:]
+        let missing = script.characters.filter { characters[$0] == nil }
+        if !missing.isEmpty {
+            guard roleConfig?.autoAssign == true else {
+                throw ValidationError(
+                    "Engine '\(engineID)' has no script voice mapping for: \(missing.joined(separator: ", ")). Configure yapper.script.voices.\(engineID.rawValue).characters or enable auto-assign with a pool."
+                )
+            }
+            let pool = roleConfig?.pool ?? []
+            guard !pool.isEmpty else {
+                throw ValidationError(
+                    "Engine '\(engineID)' script auto-assignment requires a non-empty yapper.script.voices.\(engineID.rawValue).pool."
+                )
+            }
+            for (index, character) in missing.enumerated() {
+                characters[character] = pool[index % pool.count]
+            }
+        }
+        let narrator = roleConfig?.narrator ?? baseVoice
+        return ResolvedScriptVoiceSet(
+            characters: characters,
+            narrator: narrator,
+            introduction: roleConfig?.intro ?? narrator
+        )
+    }
+
+    private struct RemoteScriptWorkItem {
+        let text: String
+        let voice: String
+        let role: SpeechSemanticRole
+        let speed: Double
+        let gapAfter: Double
+    }
+
+    private func runRemoteScriptMode(
+        engineKind: SpeechEngineKind,
+        script: ScriptDocument
+    ) throws {
+        let config = commandConfig
+        let voices = try resolveScriptVoices(script: script, engineKind: engineKind, config: config)
+        let outputPath = output ?? {
+            let input = URL(fileURLWithPath: inputs[0])
+            return input.deletingPathExtension().appendingPathExtension("m4b").path
+        }()
+        try ensureOutputDirectoryExists(outputPath)
+        if FileManager.default.fileExists(atPath: outputPath) {
+            let backupPath = nextBackupPath(for: outputPath)
+            try FileManager.default.moveItem(atPath: outputPath, toPath: backupPath)
+            if !quiet { fputs("Backed up existing \(outputPath) to \(backupPath)\n", stderr) }
+        }
+
+        let stagingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_remote_script_\(ProcessInfo.processInfo.processIdentifier)_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stagingDirectory) }
+
+        let engine = try makeRemoteSpeechEngine(engineKind: engineKind, stagingDirectory: stagingDirectory)
+        let session = SpeechEngineSession(engine: engine)
+        var chapters: [(title: String, aacPath: String, duration: Double)] = []
+
+        if config.resolvedRenderFrontmatter {
+            let introParts = remoteScriptIntroduction(script: script, config: config)
+            if !introParts.isEmpty {
+                let item = RemoteScriptWorkItem(
+                    text: introParts.joined(separator: "\n\n"),
+                    voice: voices.introduction,
+                    role: .introduction,
+                    speed: 1,
+                    gapAfter: 0
+                )
+                let chapter = try synthesizeRemoteScriptChapter(
+                    title: title ?? config.title ?? script.title ?? "Introduction",
+                    items: [item],
+                    session: session,
+                    stagingDirectory: stagingDirectory,
+                    chapterIndex: chapters.count
+                )
+                chapters.append(chapter)
+            }
+        }
+
+        let renderedScenes = script.scenes.compactMap { scene -> (ScriptScene, [RemoteScriptWorkItem])? in
+            let items = remoteScriptWorkItems(
+                scene: scene,
+                script: script,
+                config: config,
+                voices: voices
+            )
+            return items.isEmpty ? nil : (scene, items)
+        }
+        for (sceneIndex, renderedScene) in renderedScenes.enumerated() {
+            let (scene, items) = renderedScene
+            let chapter = try synthesizeRemoteScriptChapter(
+                title: scene.title,
+                items: items,
+                session: session,
+                stagingDirectory: stagingDirectory,
+                chapterIndex: chapters.count,
+                trailingGap: sceneIndex + 1 < renderedScenes.count
+                    ? config.gapAfterScene ?? 1.0
+                    : 0
+            )
+            chapters.append(chapter)
+        }
+
+        guard !chapters.isEmpty else {
+            throw ValidationError("Script produced no renderable speech for engine '\(engineKind.rawValue)'.")
+        }
+        try AudiobookAssembler.assembleM4B(
+            chapters: chapters,
+            output: outputPath,
+            title: title ?? config.title ?? script.title,
+            author: author ?? config.author ?? script.author,
+            coverArtPath: nil
+        )
+        if !quiet { fputs("Created \(outputPath)\n", stderr) }
+    }
+
+    private func remoteScriptIntroduction(
+        script: ScriptDocument,
+        config: ScriptConfig
+    ) -> [String] {
+        var parts: [String] = []
+        if let value = title ?? config.title ?? script.title { parts.append(value) }
+        if let value = config.subtitle ?? script.subtitle { parts.append(value) }
+        if let value = author ?? config.author ?? script.author { parts.append("by \(value)") }
+        parts.append(contentsOf: script.characterDescriptions.map { "\($0.name): \($0.description)" })
+        if let outline = script.outline { parts.append(outline) }
+        parts.append(contentsOf: script.preamble)
+        return parts
+    }
+
+    private func remoteScriptWorkItems(
+        scene: ScriptScene,
+        script: ScriptDocument,
+        config: ScriptConfig,
+        voices: ResolvedScriptVoiceSet
+    ) -> [RemoteScriptWorkItem] {
+        let dialogueSpeed = Double(config.dialogueSpeed ?? 1)
+        let stageSpeed = Double(config.stageDirectionSpeed ?? 1)
+        let knownCharacters = Set(script.characters)
+        var items: [RemoteScriptWorkItem] = []
+
+        func appendFootnotes(_ names: [String]) {
+            guard config.resolvedRenderFootnotes else { return }
+            for name in names {
+                guard let definition = script.footnotes[name] else { continue }
+                items.append(RemoteScriptWorkItem(
+                    text: preprocessScriptText(definition, config: config),
+                    voice: voices.narrator,
+                    role: .footnote,
+                    speed: stageSpeed,
+                    gapAfter: config.gapAfterStageDirection ?? 0.5
+                ))
+            }
+        }
+
+        for entry in scene.entries {
+            switch entry.type {
+            case .dialogue(let character):
+                guard let voice = voices.characters[character] else { continue }
+                let (text, footnotes) = ScriptParser.stripFootnoteReferences(entry.text)
+                items.append(RemoteScriptWorkItem(
+                    text: preprocessScriptText(text, config: config),
+                    voice: voice,
+                    role: .dialogue,
+                    speed: dialogueSpeed,
+                    gapAfter: config.gapAfterDialogue ?? 0.3
+                ))
+                appendFootnotes(footnotes)
+            case .stageDirection:
+                guard config.resolvedRenderStageDirections else { continue }
+                let titleCased = ScriptParser.titleCaseCharacterNames(
+                    in: entry.text,
+                    knownCharacters: knownCharacters
+                )
+                let (text, footnotes) = ScriptParser.stripFootnoteReferences(titleCased)
+                items.append(RemoteScriptWorkItem(
+                    text: preprocessScriptText(text, config: config),
+                    voice: voices.narrator,
+                    role: .stageDirection,
+                    speed: stageSpeed,
+                    gapAfter: config.gapAfterStageDirection ?? 0.5
+                ))
+                appendFootnotes(footnotes)
+            case .transition:
+                guard config.resolvedRenderTransitions else { continue }
+                items.append(RemoteScriptWorkItem(
+                    text: preprocessScriptText(entry.text, config: config),
+                    voice: voices.narrator,
+                    role: .transition,
+                    speed: stageSpeed,
+                    gapAfter: config.gapAfterStageDirection ?? 0.5
+                ))
+            }
+        }
+        return items
+    }
+
+    private func preprocessScriptText(_ text: String, config: ScriptConfig) -> String {
+        ProsePreprocessor.preprocess(
+            text,
+            substitutions: config.speechSubstitution ?? [:]
+        ).text
+    }
+
+    private func synthesizeRemoteScriptChapter(
+        title: String,
+        items: [RemoteScriptWorkItem],
+        session: SpeechEngineSession,
+        stagingDirectory: URL,
+        chapterIndex: Int,
+        trailingGap: Double = 0
+    ) throws -> (title: String, aacPath: String, duration: Double) {
+        var parts: [URL] = []
+        for (itemIndex, item) in items.enumerated() {
+            let utterance = SpeechUtterance(
+                text: item.text,
+                sourceID: "script-\(chapterIndex)-\(itemIndex)",
+                role: item.role,
+                voice: SpeechVoiceID(item.voice),
+                speed: item.speed,
+                previousText: itemIndex > 0 ? items[itemIndex - 1].text : nil,
+                nextText: itemIndex + 1 < items.count ? items[itemIndex + 1].text : nil
+            )
+            let assets = try runAsyncAndBlock {
+                try await session.synthesize([utterance])
+            }
+            for (chunkIndex, asset) in assets.enumerated() {
+                guard case .encodedAudio(let file, _, _, _) = asset else {
+                    throw ValidationError("Remote script engine returned an unsupported PCM asset.")
+                }
+                let normalized = stagingDirectory.appendingPathComponent(
+                    "script_\(chapterIndex)_\(itemIndex)_\(chunkIndex).aac"
+                )
+                try encodeWithFFmpeg(
+                    input: file.path,
+                    output: normalized.path,
+                    format: "m4a",
+                    author: nil,
+                    title: nil,
+                    trackNumber: nil,
+                    trackTotal: nil,
+                    trackTitle: nil
+                )
+                parts.append(normalized)
+            }
+            if item.gapAfter > 0, itemIndex + 1 < items.count {
+                parts.append(try makeSilentAAC(
+                    duration: item.gapAfter,
+                    directory: stagingDirectory,
+                    name: "gap_\(chapterIndex)_\(itemIndex)"
+                ))
+            }
+        }
+        if trailingGap > 0 {
+            parts.append(try makeSilentAAC(
+                duration: trailingGap,
+                directory: stagingDirectory,
+                name: "scene_gap_\(chapterIndex)"
+            ))
+        }
+
+        let chapter = stagingDirectory.appendingPathComponent("script_chapter_\(chapterIndex).aac")
+        try concatenateEncodedAudio(files: parts, output: chapter, format: "m4a")
+        return (title: title, aacPath: chapter.path, duration: try audioDurationSeconds(chapter.path))
+    }
+
+    private func makeSilentAAC(duration: Double, directory: URL, name: String) throws -> URL {
+        let output = directory.appendingPathComponent("\(name).aac")
+        try runProcess(
+            executable: try requireFFmpeg(),
+            arguments: [
+                "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                "-t", String(duration), "-c:a", "aac", "-b:a", "64k", output.path
+            ],
+            errorContext: "ffmpeg silence generation"
+        )
+        return output
     }
 
     /// Run script mode: synthesise each dialogue turn with the assigned voice.
@@ -2129,8 +2518,7 @@ struct ConvertCommand: ParsableCommand {
         let yapperPath = CommandLine.arguments[0]
         let semaphore = DispatchSemaphore(value: threadCount)
         let group = DispatchGroup()
-        let lock = NSLock()
-        var failures: [String] = []
+        let failureCollector = WorkerFailureCollector()
 
         for item in texts {
             semaphore.wait()
@@ -2163,20 +2551,19 @@ struct ConvertCommand: ParsableCommand {
                     try process.run()
                     process.waitUntilExit()
                     if process.terminationStatus != 0 {
-                        lock.lock()
-                        failures.append("Entry \(item.idx): exit code \(process.terminationStatus)")
-                        lock.unlock()
+                        failureCollector.append(
+                            "Entry \(item.idx): exit code \(process.terminationStatus)"
+                        )
                     }
                 } catch {
-                    lock.lock()
-                    failures.append("Entry \(item.idx): \(error)")
-                    lock.unlock()
+                    failureCollector.append("Entry \(item.idx): \(error)")
                 }
             }
         }
 
         group.wait()
 
+        let failures = failureCollector.snapshot()
         if !failures.isEmpty {
             let failureList = failures.joined(separator: "\n  ")
             fputs("Worker failures:\n  \(failureList)\n", stderr)
@@ -2204,8 +2591,7 @@ struct ConvertCommand: ParsableCommand {
 
     /// Load script config from --script-config flag or auto-discover.
     private func loadScriptConfig() throws -> ScriptConfig? {
-        let inputDir = inputs.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
-        let merged = ScriptConfig.loadMerged(explicitPath: scriptConfig, inputDir: inputDir)
+        let merged = commandConfig
         // Return nil if no config was found at any level
         if merged.title == nil && merged.author == nil && merged.subtitle == nil
             && merged.characterVoices == nil && merged.narratorVoice == nil

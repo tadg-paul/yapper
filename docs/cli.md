@@ -1,4 +1,4 @@
-<!-- Version: 1.2 | Last updated: 2026-07-08 -->
+<!-- Version: 1.3 | Last updated: 2026-07-14 -->
 
 # CLI Guide
 
@@ -45,9 +45,10 @@ yap --dry-run "What voice would this use?"
 The voice is resolved from these sources, in order of priority:
 
 1. `--voice <name>` - CLI flag, wins unconditionally
-2. `$YAPPER_VOICE` - environment variable for persistent preference
-3. `--random-voice` - random selection from all installed voices
-4. Default - `af_heart` (highest fidelity voice)
+2. Selected engine's canonical config voice
+3. `$YAPPER_VOICE` - native Yapper environment fallback
+4. `--random-voice` - explicit native random selection
+5. Engine default - `af_heart`, `Rachel`, or `alloy`
 
 Invalid voice names produce a clear error rather than silently falling back.
 
@@ -85,19 +86,19 @@ yapper convert chapter.md --engine fal --voice Aria --dry-run
 yapper convert chapter.md --engine openai --openai-model gpt-4o-mini-tts --voice alloy --dry-run
 ```
 
-`--engine yapper` is the default and preserves local Kokoro synthesis. `--engine fal` and `--engine openai` reuse Yapper's document ingestion, prose preprocessing, speech substitutions, chunk planning, dry-run rendering, output naming, and audiobook assembly. Dry-run mode never calls provider generation endpoints or writes a final audio file.
+`--engine yapper` is the default and preserves local Yapper synthesis. `--engine fal` and `--engine openai` reuse Yapper's document ingestion, prose/script parsing, preprocessing, speech substitutions, role pacing, chunk planning, dry-run rendering, output naming, and audiobook assembly. Dry-run mode never calls provider generation endpoints or writes a final audio file.
 
-Remote prose conversion uses provider-specific chunk constraints instead of Kokoro's 510-token budget. FAL chunks are prepared for the ElevenLabs multilingual endpoint and carry previous/next text context where available. OpenAI chunks respect the speech API input length limit. Script conversion remains native Yapper synthesis; script dry-run still uses the existing script preprocessing path.
+API-backed conversion uses provider-specific chunk constraints instead of the native model's 510-token budget. FAL chunks carry previous/next text context where available. OpenAI chunks respect the speech API input length limit. Script role mappings are selected from `yapper.script.voices.<engine>` and remain independent of native voice embeddings.
 
 Older standalone `tts-fal` and `tts-openai` shell prototypes are not the canonical implementation for Yapper text transformation, chunking, dry-run rendering, or audiobook conversion. They should be treated as deprecated wrappers or operational references; new prose conversion work belongs in `yapper convert`.
 
-Remote credentials should normally be configured under `yapper.remote-speech` in `yapper.yaml` as inline values or executable helper paths. Environment variables are supported only as fallback when the matching YAML key is absent. The `yapper:` namespace keeps Yapper-owned speech, voice, pacing, performance, and provider settings out of the shared First Folio top-level config.
+API credentials should normally use tagged `literal` or `helper` values under `yapper.engines.<engine>.credentials`. Environment variables are fallback only. The `yapper:` namespace keeps Yapper-owned speech, voice, pacing, execution, and provider settings out of the shared First Folio top level.
 
 ### Remote engine flags
 
 | Flag | Engine | Purpose |
 |------|--------|---------|
-| `--engine yapper\|fal\|openai` | convert | Select local Yapper or remote API-backed synthesis |
+| `--engine yapper\|fal\|openai` | speak, convert, voices | Select local Yapper or API-backed synthesis |
 | `--fal-endpoint <id>` | fal | FAL model endpoint, default `fal-ai/elevenlabs/tts/multilingual-v2` |
 | `--fal-output-format <fmt>` | fal | FAL audio output format, default `mp3_44100_128` |
 | `--stability <n>` | fal | ElevenLabs stability, 0...1 |
@@ -144,10 +145,10 @@ yapper convert play.org --script
 yapper convert play.org
 
 # Specify config explicitly
-yapper convert play.fountain --script-config config.yaml
+yapper convert play.fountain --config config.yaml
 
 # Preview cast and structure
-yapper convert play.org --script --dry-run
+yapper convert play.org --script --engine openai --dry-run
 
 # Control concurrency
 yapper convert play.org --threads 1
@@ -163,6 +164,9 @@ yapper voices
 
 # List voice names only (scriptable)
 yapper voices -1
+
+# List configured FAL voices (provider catalogue discovery is unavailable)
+yapper voices --engine fal --config config.yaml
 
 # Preview a specific voice
 yapper voices --preview bf_emma
@@ -197,8 +201,9 @@ Examples: `bf` = British female, `am` = American male, `a` = any American, `f` =
 
 | Flag | Commands | Purpose |
 |------|----------|---------|
-| `--voice <name>` | speak, convert | Specific voice name (default: af_heart) |
-| `--engine <name>` | convert | Speech engine: yapper, fal, openai |
+| `--voice <name>` | speak, convert | Engine-specific voice identifier |
+| `--engine <name>` | speak, convert, voices | Speech engine: yapper, fal, openai |
+| `--config <path>` | speak, convert, voices | Explicit Yapper YAML configuration |
 | `--random-voice` | speak | Use a random voice instead of the default |
 | `--speed <n>` | speak, convert | Speed multiplier (default: 1.0) |
 | `--dry-run` | speak, convert | Preview without synthesis |
@@ -208,7 +213,7 @@ Examples: `bf` = British female, `am` = American male, `a` = any American, `f` =
 | `--format <fmt>` | convert | Output format (m4a, mp3, m4b) |
 | `--script` | convert | Force script mode using defaults |
 | `--threads <n>` | convert | Worker processes for script mode |
-| `--script-config <path>` | convert | Path to script YAML config |
+| `--script-config <path>` | convert | Deprecated alias for `--config` |
 | `--title <text>` | convert | Title metadata |
 | `--author <text>` | convert | Author metadata |
 | `-1` | voices | One name per line |

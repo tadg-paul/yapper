@@ -226,6 +226,68 @@ struct RemoteSpeechTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer openai-secret")
     }
 
+    @Test("RT-46.11 and RT-46.47: built-in provider adapters synthesize through public sessions")
+    func providerAdaptersSynthesizeThroughPublicSession() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yapper_engine_adapter_tests_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let credential = ResolvedSpeechCredential(
+            value: "provider-secret",
+            sourceKind: .configLiteral,
+            sourceDescription: "configured value"
+        )
+
+        let falHTTP = FakeSpeechHTTPClient()
+        await falHTTP.enqueueJSON(#"{"audio":{"url":"https://media.example.test/voice.mp3"}}"#)
+        await falHTTP.enqueueData(Data("fal-audio".utf8), contentType: "audio/mpeg")
+        let fal = FALSpeechEngine(
+            settings: FALSpeechSettings(generationBaseURL: URL(string: "https://fal.example.test")!),
+            credential: credential,
+            stagingDirectory: directory,
+            httpClient: falHTTP
+        )
+        let falAssets = try await SpeechEngineSession(engine: fal).synthesize([
+            SpeechUtterance(
+                text: "Hello from FAL.",
+                sourceID: "line-1",
+                role: .dialogue,
+                voice: "Aria",
+                speed: 0.8,
+                previousText: "Before.",
+                nextText: "After."
+            )
+        ])
+        let falRequests = await falHTTP.requests
+        let falBody = try #require(String(data: falRequests[0].httpBody ?? Data(), encoding: .utf8))
+        #expect(falAssets.count == 1)
+        #expect(falBody.contains(#""voice":"Aria""#))
+        #expect(falBody.contains(#""speed":0.8"#))
+
+        let openAIHTTP = FakeSpeechHTTPClient()
+        await openAIHTTP.enqueueData(Data("openai-audio".utf8), contentType: "audio/aac")
+        let openAI = OpenAISpeechEngine(
+            settings: OpenAISpeechSettings(baseURL: URL(string: "https://openai.example.test/v1")!),
+            credential: credential,
+            stagingDirectory: directory,
+            httpClient: openAIHTTP
+        )
+        let openAIAssets = try await SpeechEngineSession(engine: openAI).synthesize([
+            SpeechUtterance(
+                text: "Hello from OpenAI.",
+                sourceID: "line-2",
+                role: .narration,
+                voice: "coral",
+                speed: 1.1
+            )
+        ])
+        let openAIRequests = await openAIHTTP.requests
+        let openAIBody = try #require(String(data: openAIRequests[0].httpBody ?? Data(), encoding: .utf8))
+        #expect(openAIAssets.count == 1)
+        #expect(openAIBody.contains(#""voice":"coral""#))
+        #expect(openAIBody.contains(#""speed":1.1"#))
+    }
+
     @Test("RT-41.9 and RT-41.12: FAL reporter returns pricing estimate and balance diagnostics")
     func falReporterReturnsPricingAndBalance() async {
         let httpClient = FakeSpeechHTTPClient()

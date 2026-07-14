@@ -159,7 +159,7 @@ EOF
     if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1); then
         return 1
     fi
-    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.fal.api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.engines.fal.credentials.generation failed to execute' || return 1
     printf '%s' "${output}" | grep -q 'bad-helper' || return 1
     printf '%s' "${output}" | grep -q 'Exec format error' || return 1
 
@@ -172,7 +172,7 @@ EOF
     if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1); then
         return 1
     fi
-    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.openai.api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.engines.openai.credentials.generation failed to execute' || return 1
     printf '%s' "${output}" | grep -q 'bad-helper' || return 1
     printf '%s' "${output}" | grep -q 'Exec format error' || return 1
 }
@@ -198,7 +198,7 @@ EOF
     if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine fal --dry-run --non-interactive 2>&1); then
         return 1
     fi
-    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.fal.account-api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.engines.fal.credentials.account failed to execute' || return 1
     printf '%s' "${output}" | grep -q 'bad-helper' || return 1
     printf '%s' "${output}" | grep -q 'Exec format error' || return 1
 
@@ -212,7 +212,7 @@ EOF
     if output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" --engine openai --dry-run --non-interactive 2>&1); then
         return 1
     fi
-    printf '%s' "${output}" | grep -q 'Credential helper for yapper.remote-speech.openai.admin-api-key failed to execute' || return 1
+    printf '%s' "${output}" | grep -q 'Credential helper for yapper.engines.openai.credentials.admin failed to execute' || return 1
     printf '%s' "${output}" | grep -q 'bad-helper' || return 1
     printf '%s' "${output}" | grep -q 'Exec format error' || return 1
 }

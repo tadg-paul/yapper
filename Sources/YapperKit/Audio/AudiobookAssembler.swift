@@ -20,6 +20,7 @@ public struct AudiobookAssembler {
         author: String?,
         coverArtPath: String?
     ) throws {
+#if os(macOS)
         let ffmpeg = try findFFmpeg()
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("yapper_m4b_\(UUID().uuidString)")
@@ -74,6 +75,9 @@ public struct AudiobookAssembler {
         muxArgs += ["-map_metadata", "1", "-c", "copy", output]
 
         try runFFmpeg(ffmpeg, args: muxArgs)
+#else
+        throw AudiobookError.unsupportedPlatform
+#endif
     }
 
     /// Encode raw PCM samples to AAC via ffmpeg.
@@ -86,12 +90,16 @@ public struct AudiobookAssembler {
         wavPath: String,
         output: String
     ) throws {
+#if os(macOS)
         let ffmpeg = try findFFmpeg()
         try runFFmpeg(ffmpeg, args: [
             "-y", "-i", wavPath,
             "-c:a", "aac", "-b:a", "64k",
             output
         ])
+#else
+        throw AudiobookError.unsupportedPlatform
+#endif
     }
 
     /// Extract track number from filename.
@@ -124,6 +132,7 @@ public struct AudiobookAssembler {
     }
 
     private static func runFFmpeg(_ path: String, args: [String]) throws {
+#if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
@@ -140,6 +149,9 @@ public struct AudiobookAssembler {
         guard process.terminationStatus == 0 else {
             throw AudiobookError.ffmpegFailed(status: process.terminationStatus)
         }
+#else
+        throw AudiobookError.unsupportedPlatform
+#endif
     }
 }
 
@@ -147,6 +159,7 @@ public struct AudiobookAssembler {
 public enum AudiobookError: Error, CustomStringConvertible {
     case missingFFmpeg
     case ffmpegFailed(status: Int32)
+    case unsupportedPlatform
 
     public var description: String {
         switch self {
@@ -154,6 +167,8 @@ public enum AudiobookError: Error, CustomStringConvertible {
             return "ffmpeg not found. Install via: brew install ffmpeg"
         case .ffmpegFailed(let status):
             return "ffmpeg exited with status \(status)"
+        case .unsupportedPlatform:
+            return "Audiobook assembly requires a macOS audio adapter supplied by the host application."
         }
     }
 }

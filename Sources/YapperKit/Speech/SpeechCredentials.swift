@@ -25,13 +25,13 @@ public enum SpeechCredentialSlot: String, CaseIterable, Sendable {
     public var configPath: String {
         switch self {
         case .falGeneration:
-            return "yapper.remote-speech.fal.api-key"
+            return "yapper.engines.fal.credentials.generation"
         case .falAccount:
-            return "yapper.remote-speech.fal.account-api-key"
+            return "yapper.engines.fal.credentials.account"
         case .openAIGeneration:
-            return "yapper.remote-speech.openai.api-key"
+            return "yapper.engines.openai.credentials.generation"
         case .openAIAdmin:
-            return "yapper.remote-speech.openai.admin-api-key"
+            return "yapper.engines.openai.credentials.admin"
         }
     }
 }
@@ -59,6 +59,7 @@ public enum SpeechCredentialError: Error, CustomStringConvertible, Equatable {
     case helperFailed(slot: SpeechCredentialSlot, path: String, status: Int32)
     case helperTimedOut(slot: SpeechCredentialSlot, path: String)
     case helperEmptyOutput(slot: SpeechCredentialSlot, path: String)
+    case helperUnsupported(slot: SpeechCredentialSlot, path: String)
 
     public var description: String {
         switch self {
@@ -74,104 +75,24 @@ public enum SpeechCredentialError: Error, CustomStringConvertible, Equatable {
             return "Credential helper for \(slot.configPath) timed out: \(path)"
         case .helperEmptyOutput(let slot, let path):
             return "Credential helper for \(slot.configPath) returned empty output: \(path)"
+        case .helperUnsupported(let slot, let path):
+            return "Credential helper for \(slot.configPath) is unsupported on this platform: \(path)"
         }
     }
 }
 
-public struct SpeechCredentialConfig: Sendable {
-    public let value: String?
-    public let baseDirectory: URL?
-
-    public init(value: String?, baseDirectory: URL?) {
-        self.value = value
-        self.baseDirectory = baseDirectory
-    }
+public protocol SpeechCredentialHelperRunning: Sendable {
+    func run(path: String, slot: SpeechCredentialSlot, timeout: TimeInterval) throws -> String
 }
 
-public struct SpeechCredentialResolver: Sendable {
-    private let environment: [String: String]
-    private let timeout: TimeInterval
+public struct PlatformSpeechCredentialHelperRunner: SpeechCredentialHelperRunning {
+    public init() {}
 
-    public init(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        timeout: TimeInterval = 5
-    ) {
-        self.environment = environment
-        self.timeout = timeout
-    }
-
-    public func resolve(
-        slot: SpeechCredentialSlot,
-        config: SpeechCredentialConfig = SpeechCredentialConfig(value: nil, baseDirectory: nil)
-    ) throws -> ResolvedSpeechCredential? {
-        if let configured = try resolveConfiguredCredential(config, slot: slot) {
-            return configured
-        }
-
-        for name in slot.environmentNames {
-            if let value = environment[name], !value.isEmpty {
-                return ResolvedSpeechCredential(
-                    value: value,
-                    sourceKind: .environment,
-                    sourceDescription: name
-                )
-            }
-        }
-
-        return nil
-    }
-
-    private func resolveConfiguredCredential(
-        _ config: SpeechCredentialConfig,
-        slot: SpeechCredentialSlot
-    ) throws -> ResolvedSpeechCredential? {
-        guard let rawValue = config.value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !rawValue.isEmpty else {
-            return nil
-        }
-
-        if let helperPath = helperPath(for: rawValue, baseDirectory: config.baseDirectory) {
-            let secret = try runHelper(path: helperPath, slot: slot)
-            return ResolvedSpeechCredential(
-                value: secret,
-                sourceKind: .helper,
-                sourceDescription: helperPath
-            )
-        }
-
-        return ResolvedSpeechCredential(
-            value: rawValue,
-            sourceKind: .configLiteral,
-            sourceDescription: "configured value"
-        )
-    }
-
-    private func helperPath(for value: String, baseDirectory: URL?) -> String? {
-        let expanded = expandTilde(value)
-        let isAbsolute = expanded.hasPrefix("/")
-        let absoluteCandidate = URL(fileURLWithPath: expanded)
-        let candidates: [URL]
-        if isAbsolute {
-            candidates = [absoluteCandidate]
-        } else if let baseDirectory {
-            candidates = [baseDirectory.appendingPathComponent(expanded)]
-        } else {
-            candidates = [absoluteCandidate]
-        }
-
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
-            return candidate.path
-        }
-
-        if value.hasPrefix("/") || value.hasPrefix("./") || value.hasPrefix("../") || value.hasPrefix("~") {
-            return candidates[0].path
-        }
-        return nil
-    }
-
-    private func runHelper(path: String, slot: SpeechCredentialSlot) throws -> String {
+    public func run(path: String, slot: SpeechCredentialSlot, timeout: TimeInterval) throws -> String {
+#if os(macOS)
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else {
             throw SpeechCredentialError.helperMissing(slot: slot, path: path)
         }
         guard FileManager.default.isExecutableFile(atPath: path) else {
@@ -202,7 +123,11 @@ public struct SpeechCredentialResolver: Sendable {
             throw SpeechCredentialError.helperTimedOut(slot: slot, path: path)
         }
         guard process.terminationStatus == 0 else {
-            throw SpeechCredentialError.helperFailed(slot: slot, path: path, status: process.terminationStatus)
+            throw SpeechCredentialError.helperFailed(
+                slot: slot,
+                path: path,
+                status: process.terminationStatus
+            )
         }
 
         let data = output.fileHandleForReading.readDataToEndOfFile()
@@ -214,14 +139,138 @@ public struct SpeechCredentialResolver: Sendable {
             throw SpeechCredentialError.helperEmptyOutput(slot: slot, path: path)
         }
         return secret
+#else
+        throw SpeechCredentialError.helperUnsupported(slot: slot, path: path)
+#endif
+    }
+}
+
+public enum SpeechCredentialInput: Equatable, Sendable {
+    case literal(String)
+    case helper(String)
+    case legacyAuto(String)
+}
+
+public struct SpeechCredentialConfig: Sendable {
+    public let source: SpeechCredentialInput?
+    public let baseDirectory: URL?
+
+    public init(source: SpeechCredentialInput?, baseDirectory: URL?) {
+        self.source = source
+        self.baseDirectory = baseDirectory
+    }
+
+    /// Compatibility initializer for the deprecated scalar credential keys.
+    public init(value: String?, baseDirectory: URL?) {
+        self.source = value.map(SpeechCredentialInput.legacyAuto)
+        self.baseDirectory = baseDirectory
+    }
+}
+
+public struct SpeechCredentialResolver: Sendable {
+    private let environment: [String: String]
+    private let timeout: TimeInterval
+    private let helperRunner: any SpeechCredentialHelperRunning
+
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        timeout: TimeInterval = 5,
+        helperRunner: any SpeechCredentialHelperRunning = PlatformSpeechCredentialHelperRunner()
+    ) {
+        self.environment = environment
+        self.timeout = timeout
+        self.helperRunner = helperRunner
+    }
+
+    public func resolve(
+        slot: SpeechCredentialSlot,
+        config: SpeechCredentialConfig = SpeechCredentialConfig(value: nil, baseDirectory: nil)
+    ) throws -> ResolvedSpeechCredential? {
+        if let configured = try resolveConfiguredCredential(config, slot: slot) {
+            return configured
+        }
+
+        for name in slot.environmentNames {
+            if let value = environment[name], !value.isEmpty {
+                return ResolvedSpeechCredential(
+                    value: value,
+                    sourceKind: .environment,
+                    sourceDescription: name
+                )
+            }
+        }
+
+        return nil
+    }
+
+    private func resolveConfiguredCredential(
+        _ config: SpeechCredentialConfig,
+        slot: SpeechCredentialSlot
+    ) throws -> ResolvedSpeechCredential? {
+        guard let source = config.source else { return nil }
+        let configuredValue: String
+        switch source {
+        case .literal(let value), .helper(let value), .legacyAuto(let value):
+            configuredValue = value
+        }
+        let rawValue = configuredValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+              !rawValue.isEmpty else {
+            return nil
+        }
+
+        let helperPath: String?
+        switch source {
+        case .literal:
+            helperPath = nil
+        case .helper:
+            helperPath = resolvedHelperPath(for: rawValue, baseDirectory: config.baseDirectory)
+        case .legacyAuto:
+            helperPath = legacyHelperPath(for: rawValue, baseDirectory: config.baseDirectory)
+        }
+        if let helperPath {
+            let secret = try helperRunner.run(path: helperPath, slot: slot, timeout: timeout)
+            return ResolvedSpeechCredential(
+                value: secret,
+                sourceKind: .helper,
+                sourceDescription: helperPath
+            )
+        }
+
+        return ResolvedSpeechCredential(
+            value: rawValue,
+            sourceKind: .configLiteral,
+            sourceDescription: "configured value"
+        )
+    }
+
+    private func resolvedHelperPath(for value: String, baseDirectory: URL?) -> String {
+        let expanded = expandTilde(value)
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded).standardizedFileURL.path
+        }
+        return (baseDirectory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+            .appendingPathComponent(expanded)
+            .standardizedFileURL.path
+    }
+
+    private func legacyHelperPath(for value: String, baseDirectory: URL?) -> String? {
+        let path = resolvedHelperPath(for: value, baseDirectory: baseDirectory)
+        if FileManager.default.fileExists(atPath: path) {
+            return path
+        }
+        if value.hasPrefix("/") || value.hasPrefix("./") || value.hasPrefix("../") || value.hasPrefix("~") {
+            return path
+        }
+        return nil
     }
 
     private func expandTilde(_ path: String) -> String {
         if path == "~" {
-            return FileManager.default.homeDirectoryForCurrentUser.path
+            return NSHomeDirectory()
         }
         if path.hasPrefix("~/") {
-            return FileManager.default.homeDirectoryForCurrentUser
+            return URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent(String(path.dropFirst(2))).path
         }
         return path

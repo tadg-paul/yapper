@@ -279,7 +279,7 @@ Synopses (`= text`) are collected for the outline:
 
 A file is recognized as a Fountain screenplay when:
 1. The file extension is `.fountain` or `.spmd`
-2. A `script.yaml` config file is present (either auto-discovered or via `--script-config`)
+2. Script mode is selected by project config, `--script`, or the deprecated `--script-config` alias
 
 Without a config file, `.fountain` files are not parsed as scripts.
 

@@ -15,6 +15,12 @@ struct VoicesCommand: ParsableCommand {
     @Option(name: .long, help: "Preview a voice. Accepts a voice name (bf_emma), filter shorthand (bf), or 'all'. Optional text follows as trailing arguments.")
     var preview: String?
 
+    @Option(name: .long, help: "Speech engine: yapper (default), fal, openai.")
+    var engine: String?
+
+    @Option(name: .long, help: "Explicit Yapper configuration file.")
+    var config: String?
+
     @Argument(help: "Text to speak. If omitted, uses the standard Stella passage. Use '-' to read from stdin.")
     var text: [String] = []
 
@@ -25,6 +31,21 @@ struct VoicesCommand: ParsableCommand {
     var full: Bool = false
 
     func run() throws {
+        let mergedConfig = try ScriptConfig.loadMerged(
+            explicitPath: config,
+            inputDir: FileManager.default.currentDirectoryPath
+        )
+        let selectedEngine = SpeechEngineID(engine ?? mergedConfig.selectedEngine ?? "yapper")
+        guard [SpeechEngineID.yapper, .fal, .openAI].contains(selectedEngine) else {
+            throw ValidationError(
+                "Unsupported engine '\(selectedEngine)'. Available engines: yapper, fal, openai."
+            )
+        }
+        if selectedEngine != .yapper {
+            try runConfiguredProviderVoices(engineID: selectedEngine, config: mergedConfig)
+            return
+        }
+
         if let previewSpec = preview {
             let engine = try YapperEngine(
                 modelPath: defaultModelPath(),
@@ -62,6 +83,71 @@ struct VoicesCommand: ParsableCommand {
         } else {
             let registry = try VoiceRegistry(voicesPath: defaultVoicesPath())
             listVoices(registry: registry)
+        }
+    }
+
+    private func runConfiguredProviderVoices(
+        engineID: SpeechEngineID,
+        config mergedConfig: ScriptConfig
+    ) throws {
+        let engineConfig = mergedConfig.engineConfig(engineID.rawValue)
+        let scriptConfig = mergedConfig.scriptVoiceConfig(engineID.rawValue)
+        var voices: [String] = []
+        func append(_ voice: String?) {
+            guard let voice, !voices.contains(voice) else { return }
+            voices.append(voice)
+        }
+        append(engineConfig?.voice)
+        for voice in scriptConfig?.pool ?? [] { append(voice) }
+        append(scriptConfig?.narrator)
+        append(scriptConfig?.intro)
+        for voice in scriptConfig?.characters?.values.sorted() ?? [] { append(voice) }
+        if voices.isEmpty {
+            append(engineID == .fal ? "Rachel" : "alloy")
+        }
+
+        guard let preview else {
+            if onePerLine {
+                voices.forEach { print($0) }
+            } else {
+                print("Configured voices for \(engineID):")
+                voices.forEach { print("  \($0)") }
+                print("\n\(voices.count) configured voices available; provider catalogue discovery is unavailable.")
+            }
+            return
+        }
+
+        let selectedVoices: [String]
+        if preview.lowercased() == "all" {
+            selectedVoices = voices
+        } else if voices.contains(preview) {
+            selectedVoices = [preview]
+        } else {
+            throw ValidationError(
+                "Voice '\(preview)' is not configured for engine '\(engineID)'. Configured: \(voices.joined(separator: ", "))."
+            )
+        }
+        for voice in selectedVoices {
+            try runProviderPreview(engineID: engineID, voice: voice)
+        }
+    }
+
+    private func runProviderPreview(engineID: SpeechEngineID, voice: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        var arguments = ["speak", "--engine", engineID.rawValue, "--voice", voice]
+        if let config {
+            arguments.append(contentsOf: ["--config", config])
+        }
+        arguments.append(resolvePreviewText() ?? stellaText)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw ValidationError(
+                "Voice preview for engine '\(engineID)' exited with status \(process.terminationStatus)."
+            )
         }
     }
 

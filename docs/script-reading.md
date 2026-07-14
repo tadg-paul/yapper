@@ -1,4 +1,4 @@
-<!-- Version: 2.1 | Last updated: 2026-07-08 -->
+<!-- Version: 2.2 | Last updated: 2026-07-14 -->
 
 # Script Reading
 
@@ -70,7 +70,7 @@ Is it.
 
 ## Configuration
 
-Script mode activates when a `script.yaml` file is found alongside the input file, or when `--script-config path/to/config.yaml` is specified.
+Script mode activates when a project `script.yaml` contains script settings, when script syntax is detected, or when `--script` is specified. Use `--config path/to/config.yaml` for an explicit file; `--script-config` is a deprecated compatibility alias.
 
 For the full configuration reference, config cascade rules, and example configs, see [docs/config.md](config.md).
 
@@ -90,29 +90,37 @@ render:
   footnotes: true
 
 yapper:
-  voices:
-    auto-assign: true
-    characters:
-      ALICE: bf_emma
-      BOB: bm
-    narrator: bf_lily
-    intro: bf_alice
-  pacing:
-    dialogue-speed: 1.0
-    stage-direction-speed: 0.9
-    gap-after-dialogue: 0.3
-  performance:
-    threads: 3
+  engine: yapper
+  engines:
+    yapper:
+      voice: af_heart
+      speed: 1.0
+      concurrency: 3
+  script:
+    voices:
+      yapper:
+        auto-assign: true
+        characters:
+          ALICE: bf_emma
+          BOB: bm
+        narrator: bf_lily
+        intro: bf_alice
+    pacing:
+      dialogue-speed: 1.0
+      stage-direction-speed: 0.9
+      gap-after-dialogue: 0.3
 ```
 
-Legacy top-level Yapper keys such as `auto-assign-voices`, `character-voices`, `narrator-voice`, `intro-voice`, pacing keys, and `threads` remain accepted for backward compatibility. Using them prints a deprecation warning naming the replacement `yapper.*` path.
+Each engine has an independent role map beneath `yapper.script.voices.<engine>`. Native Yapper accepts installed names and filter shorthands. FAL/OpenAI accept provider identifiers; automatic assignment requires a non-empty configured pool because provider catalogue discovery is unavailable. Legacy forms remain accepted throughout `0.x` and print replacement warnings.
 
 ### CLI flags
 
 | Flag | Purpose |
 |------|---------|
-| `--script-config path` | Path to script.yaml (otherwise auto-discovered) |
-| `--threads N` | Override worker process count (overrides YAML `yapper.performance.threads`) |
+| `--config path` | Explicit Yapper/shared script YAML |
+| `--script-config path` | Deprecated alias for `--config` |
+| `--engine ID` | `yapper`, `fal`, or `openai` |
+| `--threads N` | Override native worker count |
 | `--speed N` | Global speed multiplier (multiplied with per-type speeds) |
 | `--dry-run` | Preview script structure without synthesis |
 | `--non-interactive` | Use metadata from script/config without prompting |
@@ -137,7 +145,7 @@ When `render.frontmatter` is enabled (the default), a preamble chapter is synthe
 2. Character descriptions from the character table (controlled by `render.character-table`)
 3. Outline text
 
-The preamble uses `yapper.voices.intro` if specified, otherwise falls back to `yapper.voices.narrator`.
+The preamble uses `yapper.script.voices.<engine>.intro` if specified, otherwise the selected engine's narrator voice.
 
 ## Footnotes
 
@@ -169,7 +177,7 @@ Character names in stage directions are typically ALL CAPS in scripts (e.g. "KEV
 
 Script conversion uses multi-process concurrent synthesis by default (3 worker processes). Each worker gets its own Metal context for GPU access. The thread count is configurable:
 
-- `yapper.performance.threads: N` in script.yaml
+- `yapper.engines.yapper.concurrency: N` in script.yaml
 - `--threads N` CLI flag (overrides YAML)
 - `--threads 1` for sequential synthesis
 

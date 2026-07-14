@@ -84,7 +84,7 @@ struct ScriptParser {
         }
 
         var title: String?
-        var subtitle: String?
+        let subtitle: String? = nil
         var author: String?
         var scenes: [ScriptScene] = []
         var currentScene = ScriptScene(title: "Untitled", entries: [])

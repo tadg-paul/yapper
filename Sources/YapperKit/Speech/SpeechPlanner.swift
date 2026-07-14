@@ -67,6 +67,44 @@ public struct PreparedSpeechChunk: Codable, Equatable, Sendable {
     public let boundaryBefore: String
     public let containsParagraphBreak: Bool
     public let stableHash: String
+    public let engineID: SpeechEngineID?
+    public let voiceID: SpeechVoiceID?
+    public let semanticRole: SpeechSemanticRole?
+    public let enginePayload: EnginePreparedPayload?
+
+    public init(
+        chapterIndex: Int,
+        chapterTitle: String,
+        sourcePath: String,
+        chunkIndex: Int,
+        text: String,
+        previousText: String?,
+        nextText: String?,
+        characterCount: Int,
+        boundaryBefore: String,
+        containsParagraphBreak: Bool,
+        stableHash: String,
+        engineID: SpeechEngineID? = nil,
+        voiceID: SpeechVoiceID? = nil,
+        semanticRole: SpeechSemanticRole? = nil,
+        enginePayload: EnginePreparedPayload? = nil
+    ) {
+        self.chapterIndex = chapterIndex
+        self.chapterTitle = chapterTitle
+        self.sourcePath = sourcePath
+        self.chunkIndex = chunkIndex
+        self.text = text
+        self.previousText = previousText
+        self.nextText = nextText
+        self.characterCount = characterCount
+        self.boundaryBefore = boundaryBefore
+        self.containsParagraphBreak = containsParagraphBreak
+        self.stableHash = stableHash
+        self.engineID = engineID
+        self.voiceID = voiceID
+        self.semanticRole = semanticRole
+        self.enginePayload = enginePayload
+    }
 }
 
 public struct SpeechChapterPlan: Codable, Equatable, Sendable {

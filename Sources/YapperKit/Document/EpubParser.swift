@@ -127,6 +127,7 @@ public struct EpubParser {
     }
 
     private static func unzipEpub(at source: URL, to destination: URL) throws {
+#if os(macOS)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
@@ -138,6 +139,12 @@ public struct EpubParser {
         guard process.terminationStatus == 0 else {
             throw EpubError.notAnEpub(source.path, reason: "Failed to unzip")
         }
+#else
+        throw EpubError.notAnEpub(
+            source.path,
+            reason: "Epub extraction requires an archive adapter supplied by the host application"
+        )
+#endif
     }
 
     // MARK: - container.xml

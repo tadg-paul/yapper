@@ -126,7 +126,7 @@ Put it in the press[fn:press] over there.
 
 A file is recognized as an org-mode script when:
 1. The file extension is `.org`
-2. A `script.yaml` config file is present (either auto-discovered or via `--script-config`)
+2. Script mode is selected by project config, `--script`, or the deprecated `--script-config` alias
 
 Without a config file, `.org` files are not parsed as scripts.
 

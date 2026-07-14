@@ -40,6 +40,7 @@ public struct DocumentConverter {
     // MARK: - PDF
 
     private static func convertPDF(_ path: String) throws -> [Chapter] {
+#if os(macOS)
         let pdftotext = try requireTool(
             "pdftotext",
             hint: "Install via: brew install poppler"
@@ -66,11 +67,15 @@ public struct DocumentConverter {
         }
 
         return splitByHeadings(trimmed, source: path)
+#else
+        throw DocumentError.unsupportedPlatform(feature: "PDF conversion")
+#endif
     }
 
     // MARK: - Pandoc (docx, odt)
 
     private static func convertWithPandoc(_ path: String) throws -> [Chapter] {
+#if os(macOS)
         let pandoc = try requireTool(
             "pandoc",
             hint: "Install via: brew install pandoc"
@@ -91,6 +96,9 @@ public struct DocumentConverter {
 
         let markdown = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return splitMarkdownByH1(markdown, source: path)
+#else
+        throw DocumentError.unsupportedPlatform(feature: "Pandoc document conversion")
+#endif
     }
 
     // MARK: - Markdown
@@ -136,6 +144,7 @@ public struct DocumentConverter {
     // MARK: - Mobi
 
     private static func convertMobi(_ path: String) throws -> [Chapter] {
+#if os(macOS)
         let ebookConvert = try requireTool(
             "ebook-convert",
             hint: "Install Calibre from https://calibre-ebook.com"
@@ -158,6 +167,9 @@ public struct DocumentConverter {
         }
 
         return try EpubParser.parse(tmpEpub.path).chapters
+#else
+        throw DocumentError.unsupportedPlatform(feature: "Mobi conversion")
+#endif
     }
 
     // MARK: - Heading splitting
@@ -354,6 +366,7 @@ public enum DocumentError: Error, CustomStringConvertible {
     case missingTool(name: String, hint: String)
     case conversionFailed(String, reason: String)
     case noExtractableText(String, hint: String)
+    case unsupportedPlatform(feature: String)
 
     public var description: String {
         switch self {
@@ -365,6 +378,8 @@ public enum DocumentError: Error, CustomStringConvertible {
             return "Failed to convert \(path): \(reason)"
         case .noExtractableText(let path, let hint):
             return "No extractable text in \(path). \(hint)"
+        case .unsupportedPlatform(let feature):
+            return "\(feature) requires a macOS command adapter supplied by the host application."
         }
     }
 }
