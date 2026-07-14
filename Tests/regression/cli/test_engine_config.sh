@@ -311,3 +311,35 @@ YAML
     printf '%s' "${output}" | grep -q 'BOB: sage' || return 1
 }
 run_test "RT-47.47" "script character mappings are case-insensitive" test_script_character_names_are_case_insensitive
+
+test_voice_preview_dry_run_uses_selected_engine_substitutions() {
+    local dir home config engine voice expected output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    config="${dir}/config.yaml"
+    cat > "${config}" <<'YAML'
+yapper:
+  speech-substitution:
+    jacket: coat
+  engines:
+    fal:
+      speech-substitution:
+        jacket: blazer
+    openai:
+      speech-substitution:
+        jacket: cardigan
+YAML
+
+    for spec in 'yapper:af_heart:coat' 'fal:Rachel:blazer' 'openai:alloy:cardigan'; do
+        IFS=: read -r engine voice expected <<< "${spec}"
+        output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" voices \
+            --engine "${engine}" --config "${config}" --preview "${voice}" --dry-run \
+            'A jacket.' 2>&1)
+        printf '%s' "${output}" | grep -q "^engine: ${engine}$" || return 1
+        printf '%s' "${output}" | grep -q "^voice:.*${voice}" || return 1
+        printf '%s' "${output}" | grep -q "text:.*A ${expected}\." || return 1
+        printf '%s' "${output}" | grep -q '(dry run' || return 1
+    done
+}
+run_test "RT-47.13 and RT-47.48" "voice preview dry-run applies selected-engine substitutions" test_voice_preview_dry_run_uses_selected_engine_substitutions
