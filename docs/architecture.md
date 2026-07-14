@@ -1,4 +1,4 @@
-<!-- Version: 0.6 | Last updated: 2026-07-14 -->
+<!-- Version: 0.7 | Last updated: 2026-07-14 -->
 
 # Yapper - Architecture
 
@@ -72,6 +72,8 @@ public enum SpeechSynthesisAsset: Sendable {
 ```
 
 `SpeechEngineRegistry` resolves open identifiers to invocation-scoped factories. `SpeechEngineSession` retains one engine instance across planned chunks. Engine-owned opaque payloads and deterministic synthesis signatures allow a future F5 implementation to add reference profiles and model settings without changing document/script parsing, audio asset types, or a closed prepared-work enum.
+
+The next pronunciation increment, governed by `AC46.11` and `AC47.11`-`AC47.12`, adds `SpeechEngineCapabilities.supportsIPA`. This means that an adapter supports Yapper's configured IPA contract, not that every provider accepts the same wire syntax. The adapter owns any engine-specific encoding. Yapper will declare support; FAL and OpenAI will not. Future engines, including F5, declare the capability when registered. Configuration resolution will merge Unicode case-insensitive, whole-term substitutions, superimpose the selected engine's exceptions, and choose IPA or its optional phonetic fallback before engine chunking. Unsupported IPA without a fallback will leave the source term unchanged.
 
 YapperKit owns the engine protocol, registry, planning values, built-in adapters, and audio assets. Its public synthesis path imports neither ArgumentParser nor Yams and does not discover Homebrew paths, user config, `afplay`, or `ffmpeg`. CLI and host applications inject model/resource paths, credentials, staging locations, and playback services. Legacy document/audiobook helpers that wrap macOS commands are platform-gated and report that a host adapter is required on iOS. The package declares macOS 15 and iOS 18 library support; native host applications can use the synthesis boundary without adopting the CLI.
 

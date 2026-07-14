@@ -1,4 +1,4 @@
-<!-- Version: 1.3 | Last updated: 2026-07-14 -->
+<!-- Version: 1.4 | Last updated: 2026-07-14 -->
 
 # Configuration
 
@@ -26,23 +26,48 @@ subtitle: "A Drama in Two Acts"
 author: "Author Name"
 ```
 
-### Pronunciation
+### Speech substitutions and pronunciation
+
+The currently implemented scalar form supports plain replacement text and slash-wrapped IPA for native Yapper:
+
+```yaml
+yapper:
+  speech-substitution:
+    Cáit: Kawch
+    Taḋg: "/taɪɡ/"
+    Gda: Garda
+```
+
+The next pronunciation increment is governed by `AC46.11`, `AC47.11`, and `AC47.12`. Its canonical target is:
 
 ```yaml
 yapper:
   speech-substitution:
     Cáit: Kawch                  # plain text replacement
-    Taḋg: "/taɪɡ/"             # IPA notation (slashes denote IPA)
+    Taḋg: "/taɪɡ/(Tigue)"      # IPA with phonetic fallback
     Gda: Garda                  # regional term expansion
+
+  engines:
+    openai:
+      speech-substitution:
+        Cáit: Cotch             # selected-engine override
 ```
 
-Applied to all text before synthesis, in all modes.
+General substitutions are inherited by every engine in every speech-producing mode. The selected engine's `speech-substitution` map is then superimposed on the general map, so only genuine engine exceptions need to be repeated.
 
-**IPA values** are wrapped in `/slashes/`. Yapper automatically converts these to the inline IPA format the G2P engine expects (`[word](/phonemes/)`). Plain text replacements are applied directly.
+Substitution keys are matched case-insensitively at Unicode word boundaries. Multi-word keys are matched as a complete phrase with boundaries only at the outside edges. Matching preserves accents: `Cait` and `Cáit` are distinct keys. A key is never replaced inside a larger word.
 
-Substitution keys are matched case-insensitively, so one entry covers lowercase, capitalized, and uppercase occurrences in source text.
+Values have three compact forms:
 
-For inline IPA in source text (without config), use the bracket syntax directly: `[word](/phonemes/)`.
+- `Kawch` is a plain replacement used by every engine.
+- `/taɪɡ/` is IPA without a fallback.
+- `/taɪɡ/(Tigue)` is IPA followed by an optional, recommended phonetic spelling.
+
+Each engine declares whether it supports Yapper-configured IPA. An IPA-capable engine receives the IPA pronunciation. An engine without IPA support receives the parenthesized phonetic spelling when present. If IPA is unsupported and no phonetic spelling is present, the original matched text remains unchanged; Yapper does not attempt automatic IPA-to-spelling conversion. Dry-run diagnostics identify skipped IPA-only substitutions.
+
+General and engine-specific maps merge case-insensitively by logical key across global, project, and explicit config layers. The higher-precedence spelling and value win. After file-layer merging, the selected engine map overrides the effective general map.
+
+Until that increment is implemented, `/ipa/(phonetic)` values and engine-level `speech-substitution` maps are design-contract syntax rather than supported runtime configuration. For native Yapper inline IPA in source text, use `[word](/phonemes/)`.
 
 ### Engine selection and defaults
 
@@ -130,6 +155,8 @@ yapper:
         narrator: alloy
         intro: alloy
 ```
+
+The next matching increment requires character mapping keys to be Unicode case-insensitive across script parsing, layered config merging, and every engine. Accents remain significant, so `CAIT` and `CÁIT` are not conflated automatically. Higher-precedence case variants represent the same logical character and replace the inherited mapping. This target is governed by `AC47.11`; current callers should retain consistent character-name case until it is implemented.
 
 ### Content rendering (script mode)
 
