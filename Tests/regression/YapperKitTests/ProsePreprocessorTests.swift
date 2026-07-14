@@ -91,6 +91,55 @@ struct ProsePreprocessorTests {
         #expect(result.text == "The coat, coat, and coat. The [Taoiseach](/tiːʃəx/) and [TAOISEACH](/tiːʃəx/).")
     }
 
+    @Test("RT-47.44 and RT-47.45: substitutions match Unicode whole terms")
+    func substitutionsMatchUnicodeWholeTerms() {
+        let result = ProsePreprocessor.preprocess(
+            "Cáit met CÁIT near Caitlin and the garda, not Gdansk.",
+            substitutions: [
+                "Cáit": "Kawch",
+                "garda": "guard"
+            ]
+        )
+
+        #expect(result.text == "Kawch met Kawch near Caitlin and the guard, not Gdansk.")
+    }
+
+    @Test("RT-47.45: multiword substitutions use outer term boundaries")
+    func multiwordSubstitutionsUseOuterBoundaries() {
+        let result = ProsePreprocessor.preprocess(
+            "New York, new yorker, and anew york differ.",
+            substitutions: ["new york": "NYC"]
+        )
+
+        #expect(result.text == "NYC, new yorker, and anew york differ.")
+    }
+
+    @Test("RT-46.52 through RT-46.55: IPA resolves by engine capability")
+    func ipaResolvesByEngineCapability() {
+        let supported = ProsePreprocessor.preprocess(
+            "Taḋg met Cáit.",
+            substitutions: [
+                "Taḋg": "/taɪɡ/(Tigue)",
+                "Cáit": "/kɔːt/"
+            ],
+            supportsIPA: true
+        )
+        let unsupported = ProsePreprocessor.preprocess(
+            "Taḋg met Cáit.",
+            substitutions: [
+                "Taḋg": "/taɪɡ/(Tigue)",
+                "Cáit": "/kɔːt/"
+            ],
+            supportsIPA: false
+        )
+
+        #expect(supported.text == "[Taḋg](/taɪɡ/) met [Cáit](/kɔːt/).")
+        #expect(unsupported.text == "Tigue met Cáit.")
+        #expect(unsupported.diagnostics.contains {
+            $0.kind == .substitutionSkipped && $0.original == "Cáit"
+        })
+    }
+
     @Test("RT-34.12 through RT-34.14: section pause is distinct from paragraph break")
     func sectionPauseMetadataIsDistinctFromParagraphBreaks() {
         let result = ProsePreprocessor.preprocess("One.\n\nTwo.\n\n___\n\nThree.")

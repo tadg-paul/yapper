@@ -226,3 +226,83 @@ YAML
     printf '%s' "${output}" | grep -q 'provider catalogue discovery is unavailable' || return 1
 }
 run_test "RT-46.43" "voices describes configured-only provider catalogues" test_provider_voice_listing_uses_configured_catalogue
+
+test_case_insensitive_substitution_merge_and_boundaries() {
+    local dir home config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}/.config/yapper"
+    config="${dir}/explicit.yaml"
+    cat > "${home}/.config/yapper/yapper.yaml" <<'YAML'
+yapper:
+  speech-substitution:
+    Cáit: global
+YAML
+    cat > "${config}" <<'YAML'
+yapper:
+  speech-substitution:
+    CÁIT: project
+YAML
+    output=$(cd "${dir}" && CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" speak \
+        --config "${config}" --dry-run 'cáit met Cait and Caitlin.' 2>&1)
+    printf '%s' "${output}" | grep -q 'text:.*project met Cait and Caitlin\.' || return 1
+    if printf '%s' "${output}" | grep -q 'global'; then
+        return 1
+    fi
+}
+run_test "RT-47.44 through RT-47.46" "substitution keys merge case-insensitively at term boundaries" test_case_insensitive_substitution_merge_and_boundaries
+
+test_engine_substitution_overlay_and_ipa_fallback() {
+    local dir home config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    config="${dir}/explicit.yaml"
+    cat > "${config}" <<'YAML'
+yapper:
+  speech-substitution:
+    Cáit: Kawch
+    Taḋg: "/taɪɡ/(Tigue)"
+    Gda: "/ɡədɑː/"
+  engines:
+    openai:
+      speech-substitution:
+        cÁIT: Cotch
+YAML
+    output=$(cd "${dir}" && CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" speak \
+        --engine openai --config "${config}" --dry-run 'Cáit met Taḋg and Gda.' 2>&1)
+    printf '%s' "${output}" | grep -q 'text:.*Cotch met Tigue and Gda\.' || return 1
+    printf '%s' "${output}" | grep -q 'skipped unsupported IPA substitution.*Gda' || return 1
+}
+run_test "RT-47.48 through RT-47.52" "selected engine overlays substitutions and resolves IPA fallback" test_engine_substitution_overlay_and_ipa_fallback
+
+test_script_character_names_are_case_insensitive() {
+    local dir home input config output
+    dir=$(mktemp -d)
+    home="${dir}/home"
+    mkdir -p "${home}"
+    input="${dir}/play.md"
+    config="${dir}/config.yaml"
+    cat > "${input}" <<'MARKDOWN'
+# Test Play
+
+## Scene One
+
+**ALICE:**
+Hello.
+MARKDOWN
+    cat > "${config}" <<'YAML'
+yapper:
+  engine: openai
+  script:
+    voices:
+      openai:
+        narrator: ash
+        characters:
+          alice: nova
+YAML
+    output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" \
+        --config "${config}" --dry-run --non-interactive 2>&1)
+    printf '%s' "${output}" | grep -q 'ALICE: nova' || return 1
+}
+run_test "RT-47.47" "script character mappings are case-insensitive" test_script_character_names_are_case_insensitive

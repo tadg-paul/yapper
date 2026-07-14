@@ -7,6 +7,13 @@ import Testing
 
 @Suite(.serialized)
 struct SpeechEngineArchitectureTests {
+    @Test("RT-46.52: built-in engines declare IPA capability")
+    func builtInEnginesDeclareIPACapability() {
+        #expect(SpeechEngineCapabilities.yapper.supportsIPA)
+        #expect(!SpeechEngineCapabilities.fal.supportsIPA)
+        #expect(!SpeechEngineCapabilities.openAI.supportsIPA)
+    }
+
     @Test("RT-46.37, RT-46.47: registered engines carry private prepared payloads")
     func registeredEngineCarriesPrivatePreparedPayload() async throws {
         let recorder = EngineRecorder()
