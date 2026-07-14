@@ -6,34 +6,11 @@
 
 Yapper is a two-layer Swift system: **YapperKit** (library) and **yapper** (CLI). YapperKit owns local TTS inference, speech planning, provider boundaries, and audio output. The CLI handles document ingestion, chapter detection, engine selection, and audiobook assembly.
 
-```
-┌──────────────────────────────────────────────────┐
-│                  yapper (CLI)                     │
-│                                                   │
-│  Document Ingestion    Chapter Detection           │
-│  (pandoc, pdftotext,   (epub TOC, heading          │
-│   calibre)             heuristics)                 │
-│                                                   │
-│  Audiobook Assembly    Voice Assignment            │
-│  (ffmpeg: mp3/m4b,     (random, explicit,          │
-│   chapter markers,      per-chapter)               │
-│   metadata)                                        │
-├──────────────────────────────────────────────────┤
-│                 YapperKit                         │
-│                                                   │
-│  Text Chunker     Inference Engine   Audio Output  │
-│  (sentence-level   (own Kokoro impl   (afplay for   │
-│   splitting,        on MLX Swift)      playback,    │
-│   510-token cap)                       PCM buffer   │
-│                                        for files)   │
-│                                                   │
-│  Timestamps        Voice Registry    Mel Spectrogram│
-│  (word-level,       (enumerate,       (quality      │
-│   from inference)    load, filter)     comparison)  │
-├──────────────────────────────────────────────────┤
-│  MisakiSwift (G2P) + MLX Swift (Metal inference)  │
-└──────────────────────────────────────────────────┘
-```
+| Layer | Responsibilities |
+|---|---|
+| **`yapper` CLI** | Document ingestion through pandoc, pdftotext, and calibre; chapter detection from EPUB tables of contents and heading heuristics; engine and voice selection; audiobook assembly, chapter markers, and metadata through ffmpeg. |
+| **YapperKit** | Prose preprocessing; engine-neutral speech planning; the native Yapper inference engine; provider adapters; voice registry; timestamps; playback; and PCM or encoded audio assets. |
+| **Dependencies** | MisakiSwift for grapheme-to-phoneme conversion and MLX Swift for Metal inference in the native Yapper engine. |
 
 The diagram above shows the default native Yapper engine, whose current implementation uses open-source Kokoro model weights. Kokoro is model provenance, not a public engine identity. Yapper, FAL, and OpenAI are peer engines selected for `speak`, prose conversion, script conversion, and voice preview; `yapper` remains local, offline, and the default.
 
