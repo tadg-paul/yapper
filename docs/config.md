@@ -1,4 +1,4 @@
-<!-- Version: 1.4 | Last updated: 2026-07-14 -->
+<!-- Version: 1.5 | Last updated: 2026-07-14 -->
 
 # Configuration
 
@@ -28,7 +28,7 @@ author: "Author Name"
 
 ### Speech substitutions and pronunciation
 
-The currently implemented scalar form supports plain replacement text and slash-wrapped IPA for native Yapper:
+Speech substitutions support plain replacement text, slash-wrapped IPA, and IPA with a phonetic fallback:
 
 ```yaml
 yapper:
@@ -38,7 +38,7 @@ yapper:
     Gda: Garda
 ```
 
-The next pronunciation increment is governed by `AC46.11`, `AC47.11`, and `AC47.12`. Its canonical target is:
+The canonical structure governed by `AC46.11`, `AC47.11`, and `AC47.12` is:
 
 ```yaml
 yapper:
@@ -67,7 +67,7 @@ Each engine declares whether it supports Yapper-configured IPA. An IPA-capable e
 
 General and engine-specific maps merge case-insensitively by logical key across global, project, and explicit config layers. The higher-precedence spelling and value win. After file-layer merging, the selected engine map overrides the effective general map.
 
-Until that increment is implemented, `/ipa/(phonetic)` values and engine-level `speech-substitution` maps are design-contract syntax rather than supported runtime configuration. For native Yapper inline IPA in source text, use `[word](/phonemes/)`.
+Native Yapper inline IPA in source text also remains available as `[word](/phonemes/)`.
 
 ### Engine selection and defaults
 

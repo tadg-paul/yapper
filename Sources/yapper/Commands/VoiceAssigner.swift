@@ -45,7 +45,10 @@ struct VoiceAssigner {
 
         // Phase 1: explicit voice names
         for char in characters {
-            guard let voiceSpec = configVoices[char] else { continue }
+            guard let voiceSpec = CaseInsensitiveConfigMap.value(
+                for: char,
+                in: configVoices
+            ) else { continue }
             if voiceSpec.lowercased() == "auto" { continue }
 
             // Check if it's a full voice name (contains underscore)
@@ -59,7 +62,10 @@ struct VoiceAssigner {
 
         // Phase 2: filter shorthands (e.g. "bf", "am")
         for char in characters where assigned[char] == nil {
-            guard let voiceSpec = configVoices[char] else { continue }
+            guard let voiceSpec = CaseInsensitiveConfigMap.value(
+                for: char,
+                in: configVoices
+            ) else { continue }
             if voiceSpec.lowercased() == "auto" { continue }
             if voiceSpec.contains("_") { continue } // Already handled in phase 1
 

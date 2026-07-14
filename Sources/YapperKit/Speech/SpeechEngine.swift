@@ -66,6 +66,7 @@ public struct SpeechEngineCapabilities: Codable, Equatable, Sendable {
     public let supportsReferenceAudio: Bool
     public let supportsStreaming: Bool
     public let supportsVoiceDiscovery: Bool
+    public let supportsIPA: Bool
     public let licenceCategory: String?
 
     public var isRemote: Bool { locality == .remote }
@@ -79,6 +80,7 @@ public struct SpeechEngineCapabilities: Codable, Equatable, Sendable {
         supportsReferenceAudio: Bool,
         supportsStreaming: Bool,
         supportsVoiceDiscovery: Bool = false,
+        supportsIPA: Bool = false,
         licenceCategory: String? = nil
     ) {
         self.engineID = engineID
@@ -89,6 +91,7 @@ public struct SpeechEngineCapabilities: Codable, Equatable, Sendable {
         self.supportsReferenceAudio = supportsReferenceAudio
         self.supportsStreaming = supportsStreaming
         self.supportsVoiceDiscovery = supportsVoiceDiscovery
+        self.supportsIPA = supportsIPA
         self.licenceCategory = licenceCategory
     }
 
@@ -111,6 +114,7 @@ public struct SpeechEngineCapabilities: Codable, Equatable, Sendable {
             supportsReferenceAudio: supportsReferenceAudio,
             supportsStreaming: supportsStreaming,
             supportsVoiceDiscovery: engineKind == .yapper,
+            supportsIPA: engineKind == .yapper,
             licenceCategory: licenceCategory
         )
     }
@@ -124,6 +128,7 @@ public struct SpeechEngineCapabilities: Codable, Equatable, Sendable {
         supportsReferenceAudio: false,
         supportsStreaming: true,
         supportsVoiceDiscovery: true,
+        supportsIPA: true,
         licenceCategory: "Apache-2.0 weights"
     )
 
@@ -137,6 +142,15 @@ public struct SpeechEngineCapabilities: Codable, Equatable, Sendable {
         supportsStreaming: false,
         licenceCategory: "provider-managed"
     )
+
+    public static func builtIn(for engineID: SpeechEngineID) -> SpeechEngineCapabilities? {
+        switch engineID {
+        case .yapper: return .yapper
+        case .fal: return .fal
+        case .openAI: return .openAI
+        default: return nil
+        }
+    }
 
     public static let openAI = SpeechEngineCapabilities(
         engineID: .openAI,

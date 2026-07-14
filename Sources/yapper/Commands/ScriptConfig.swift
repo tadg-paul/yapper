@@ -133,10 +133,12 @@ struct EngineYAMLConfig: Decodable {
     var textNormalization: String?
     var instructions: String?
     var credentials: EngineCredentialsYAML?
+    var speechSubstitution: [String: String]?
     var options: [String: EngineOptionValue]
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case voice, speed, concurrency, endpoint, model, stability, style, instructions, credentials
+        case speechSubstitution = "speech-substitution"
         case outputFormat = "output-format"
         case similarityBoost = "similarity-boost"
         case languageCode = "language-code"
@@ -165,6 +167,7 @@ struct EngineYAMLConfig: Decodable {
         textNormalization: String? = nil,
         instructions: String? = nil,
         credentials: EngineCredentialsYAML? = nil,
+        speechSubstitution: [String: String]? = nil,
         options: [String: EngineOptionValue] = [:]
     ) {
         self.voice = voice
@@ -180,6 +183,7 @@ struct EngineYAMLConfig: Decodable {
         self.textNormalization = textNormalization
         self.instructions = instructions
         self.credentials = credentials
+        self.speechSubstitution = speechSubstitution
         self.options = options
     }
 
@@ -198,6 +202,10 @@ struct EngineYAMLConfig: Decodable {
         textNormalization = try known.decodeIfPresent(String.self, forKey: .textNormalization)
         instructions = try known.decodeIfPresent(String.self, forKey: .instructions)
         credentials = try known.decodeIfPresent(EngineCredentialsYAML.self, forKey: .credentials)
+        speechSubstitution = try known.decodeIfPresent(
+            [String: String].self,
+            forKey: .speechSubstitution
+        )
 
         let knownNames = Set(CodingKeys.allCases.map(\.rawValue))
         let dynamic = try decoder.container(keyedBy: DynamicKey.self)
@@ -222,6 +230,10 @@ struct EngineYAMLConfig: Decodable {
             textNormalization: upper.textNormalization ?? textNormalization,
             instructions: upper.instructions ?? instructions,
             credentials: mergeCredentials(credentials, upper.credentials),
+            speechSubstitution: mergeOptionalConfigMaps(
+                speechSubstitution,
+                upper.speechSubstitution
+            ),
             options: mergeOptions(options, upper.options)
         )
     }
@@ -348,6 +360,13 @@ struct ScriptConfig: Decodable {
 
     func engineConfig(_ id: String) -> EngineYAMLConfig? {
         yapper?.engines?[id]
+    }
+
+    func resolvedSpeechSubstitutions(engineID: SpeechEngineID) -> [String: String] {
+        CaseInsensitiveConfigMap.merging(
+            speechSubstitution ?? [:],
+            engineConfig(engineID.rawValue)?.speechSubstitution ?? [:]
+        )
     }
 
     func scriptVoiceConfig(_ id: String) -> ScriptVoiceYAMLConfig? {
@@ -504,14 +523,16 @@ struct ScriptConfig: Decodable {
 
         // Merge dictionaries key-by-key
         if let overrideVoices = override.characterVoices {
-            var merged = result.characterVoices ?? [:]
-            for (k, v) in overrideVoices { merged[k] = v }
-            result.characterVoices = merged
+            result.characterVoices = CaseInsensitiveConfigMap.merging(
+                result.characterVoices ?? [:],
+                overrideVoices
+            )
         }
         if let overrideSubs = override.speechSubstitution {
-            var merged = result.speechSubstitution ?? [:]
-            for (k, v) in overrideSubs { merged[k] = v }
-            result.speechSubstitution = merged
+            result.speechSubstitution = CaseInsensitiveConfigMap.merging(
+                result.speechSubstitution ?? [:],
+                overrideSubs
+            )
         }
         applyNamespacedYapperConfig(from: override, to: &result)
 
@@ -538,9 +559,10 @@ struct ScriptConfig: Decodable {
         result.yapper = mergedYapper
 
         if let namespacedSubs = yapper.speechSubstitution {
-            var merged = result.speechSubstitution ?? [:]
-            for (k, v) in namespacedSubs { merged[k] = v }
-            result.speechSubstitution = merged
+            result.speechSubstitution = CaseInsensitiveConfigMap.merging(
+                result.speechSubstitution ?? [:],
+                namespacedSubs
+            )
         }
 
         if let voices = yapper.voices {
@@ -548,9 +570,10 @@ struct ScriptConfig: Decodable {
             if let v = voices.narrator { result.narratorVoice = v }
             if let v = voices.intro { result.introVoice = v }
             if let characters = voices.characters {
-                var merged = result.characterVoices ?? [:]
-                for (k, v) in characters { merged[k] = v }
-                result.characterVoices = merged
+                result.characterVoices = CaseInsensitiveConfigMap.merging(
+                    result.characterVoices ?? [:],
+                    characters
+                )
             }
         }
 
@@ -617,7 +640,7 @@ struct ScriptConfig: Decodable {
     ) -> ScriptVoiceYAMLConfig {
         var characters = lower?.characters ?? [:]
         if let upperCharacters = upper.characters {
-            for (name, voice) in upperCharacters { characters[name] = voice }
+            characters = CaseInsensitiveConfigMap.merging(characters, upperCharacters)
         }
         return ScriptVoiceYAMLConfig(
             autoAssign: upper.autoAssign ?? lower?.autoAssign,
@@ -634,9 +657,10 @@ struct ScriptConfig: Decodable {
             if let value = voices.narrator { result.narratorVoice = value }
             if let value = voices.intro { result.introVoice = value }
             if let characters = voices.characters {
-                var merged = result.characterVoices ?? [:]
-                for (name, voice) in characters { merged[name] = voice }
-                result.characterVoices = merged
+                result.characterVoices = CaseInsensitiveConfigMap.merging(
+                    result.characterVoices ?? [:],
+                    characters
+                )
             }
         }
         if let pacing = yapper.script?.pacing {
@@ -774,32 +798,25 @@ struct ScriptConfig: Decodable {
     /// If a replacement value is IPA (wrapped in `/slashes/`), it is
     /// converted to MisakiSwift's inline IPA format: `[original](/phonemes/)`.
     /// Plain text replacements are applied directly.
-    static func applySubstitutions(_ text: String, substitutions: [String: String]) -> String {
-        guard !substitutions.isEmpty else { return text }
-        var result = text
-        for (find, replace) in substitutions {
-            guard !find.isEmpty else { continue }
-            let pattern = NSRegularExpression.escapedPattern(for: find)
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                continue
-            }
-            let searchRange = NSRange(result.startIndex..., in: result)
-            let matches = regex.matches(in: result, range: searchRange)
-            for match in matches.reversed() {
-                guard let range = Range(match.range, in: result) else { continue }
-                let matchedText = String(result[range])
-                let replacement: String
-                if replace.count > 2 && replace.hasPrefix("/") && replace.hasSuffix("/") {
-                    // IPA value: wrap the matched source word for G2P processing.
-                    replacement = "[\(matchedText)](\(replace))"
-                } else {
-                    replacement = replace
-                }
-                result.replaceSubrange(range, with: replacement)
-            }
-        }
-        return result
+    static func applySubstitutions(
+        _ text: String,
+        substitutions: [String: String],
+        supportsIPA: Bool = true
+    ) -> String {
+        ProsePreprocessor.preprocess(
+            text,
+            substitutions: substitutions,
+            supportsIPA: supportsIPA
+        ).text
     }
+}
+
+private func mergeOptionalConfigMaps<Value>(
+    _ lower: [String: Value]?,
+    _ upper: [String: Value]?
+) -> [String: Value]? {
+    guard lower != nil || upper != nil else { return nil }
+    return CaseInsensitiveConfigMap.merging(lower ?? [:], upper ?? [:])
 }
 
 enum ScriptError: Error, CustomStringConvertible {

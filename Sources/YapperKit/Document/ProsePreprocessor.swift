@@ -24,6 +24,7 @@ public enum ProsePreprocessDiagnosticKind: String, CaseIterable, Codable, Sendab
     case emphasis
     case dialogueDash
     case substitution
+    case substitutionSkipped
 }
 
 public struct ProsePreprocessDiagnostic: Codable, Equatable, Sendable {
@@ -64,7 +65,8 @@ public struct ProsePreprocessResult: Codable, Equatable, Sendable {
 public enum ProsePreprocessor {
     public static func preprocess(
         _ text: String,
-        substitutions: [String: String] = [:]
+        substitutions: [String: String] = [:],
+        supportsIPA: Bool = true
     ) -> ProsePreprocessResult {
         var diagnostics: [ProsePreprocessDiagnostic] = []
         var sectionBreaks: [ProseSectionBreak] = []
@@ -77,6 +79,7 @@ public enum ProsePreprocessor {
         let substituted = applySubstitutions(
             normalized,
             substitutions: substitutions,
+            supportsIPA: supportsIPA,
             diagnostics: &diagnostics
         )
         let hyphenNormalized = normalizeIntraWordHyphens(substituted)
@@ -308,33 +311,50 @@ public enum ProsePreprocessor {
     private static func applySubstitutions(
         _ text: String,
         substitutions: [String: String],
+        supportsIPA: Bool,
         diagnostics: inout [ProsePreprocessDiagnostic]
     ) -> String {
         guard !substitutions.isEmpty else { return text }
         var result = text
 
-        for (find, replace) in substitutions {
+        let orderedSubstitutions = substitutions.sorted {
+            if $0.key.count == $1.key.count {
+                return CaseInsensitiveConfigMap.identity($0.key)
+                    < CaseInsensitiveConfigMap.identity($1.key)
+            }
+            return $0.key.count > $1.key.count
+        }
+        for (find, replace) in orderedSubstitutions {
             guard !find.isEmpty else { continue }
             var didReplace = false
-            var lastReplacement = ""
-            var searchStart = result.startIndex
-
-            while searchStart < result.endIndex,
-                  let range = result.range(
-                    of: find,
-                    options: [.caseInsensitive],
-                    range: searchStart..<result.endIndex
-                  ) {
+            var didSkip = false
+            var lastReplacement = replace
+            let escaped = NSRegularExpression.escapedPattern(for: find)
+            let pattern = "(?<![\\p{L}\\p{M}\\p{N}\\p{Pc}])\(escaped)(?![\\p{L}\\p{M}\\p{N}\\p{Pc}])"
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.caseInsensitive, .useUnicodeWordBoundaries]
+            ) else {
+                continue
+            }
+            let matches = regex.matches(
+                in: result,
+                range: NSRange(result.startIndex..., in: result)
+            )
+            for match in matches.reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
                 let matched = String(result[range])
-                let replacement = substitutionReplacement(
-                    find: find,
+                guard let replacement = substitutionReplacement(
                     replace: replace,
-                    matched: matched
-                )
+                    matched: matched,
+                    supportsIPA: supportsIPA
+                ) else {
+                    didSkip = true
+                    continue
+                }
                 result.replaceSubrange(range, with: replacement)
                 didReplace = true
                 lastReplacement = replacement
-                searchStart = result.index(range.lowerBound, offsetBy: replacement.count)
             }
 
             if didReplace {
@@ -344,20 +364,52 @@ public enum ProsePreprocessor {
                     replacement: lastReplacement
                 ))
             }
+            if didSkip {
+                diagnostics.append(ProsePreprocessDiagnostic(
+                    kind: .substitutionSkipped,
+                    original: find,
+                    replacement: "unsupported IPA; source text preserved"
+                ))
+            }
         }
 
         return result
     }
 
     private static func substitutionReplacement(
-        find: String,
         replace: String,
-        matched: String
-    ) -> String {
-        if replace.count > 2 && replace.hasPrefix("/") && replace.hasSuffix("/") {
-            return "[\(matched.isEmpty ? find : matched)](\(replace))"
+        matched: String,
+        supportsIPA: Bool
+    ) -> String? {
+        guard let ipa = parseIPAReplacement(replace) else { return replace }
+        if supportsIPA {
+            return "[\(matched)](/\(ipa.phonemes)/)"
         }
-        return replace
+        return ipa.phonetic
+    }
+
+    private static func parseIPAReplacement(
+        _ replacement: String
+    ) -> (phonemes: String, phonetic: String?)? {
+        guard replacement.hasPrefix("/"), replacement.count > 2 else { return nil }
+        let contentStart = replacement.index(after: replacement.startIndex)
+
+        if replacement.hasSuffix("/") {
+            let contentEnd = replacement.index(before: replacement.endIndex)
+            return (String(replacement[contentStart..<contentEnd]), nil)
+        }
+
+        guard replacement.hasSuffix(")"),
+              let separator = replacement.range(of: "/(", options: .backwards),
+              separator.lowerBound > contentStart else {
+            return nil
+        }
+        let phoneticEnd = replacement.index(before: replacement.endIndex)
+        let phonetic = String(replacement[separator.upperBound..<phoneticEnd])
+        return (
+            String(replacement[contentStart..<separator.lowerBound]),
+            phonetic.isEmpty ? nil : phonetic
+        )
     }
 }
 

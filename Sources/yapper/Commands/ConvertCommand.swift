@@ -320,7 +320,7 @@ struct ConvertCommand: ParsableCommand {
         let outputFormat = remoteOutputFormat(engineKind: engineKind, multiChapter: multiChapter)
         let outputPath = try resolveRemoteOutputPath(format: outputFormat, multiChapter: multiChapter)
         let mergedConfig = commandConfig
-        let substitutions = mergedConfig.speechSubstitution ?? [:]
+        let substitutions = mergedConfig.resolvedSpeechSubstitutions(engineID: engineKind.id)
         let settingsSignature = try remoteSettingsSignature(engineKind: engineKind)
         let sources = chapters.enumerated().map { index, chapter in
             SpeechSourceDocument(
@@ -486,6 +486,12 @@ struct ConvertCommand: ParsableCommand {
         print("  Chunk policy: \(plan.constraints.policyName)")
         print("  Chunks: \(plan.chunks.count)")
         print("  Transformed characters: \(plan.transformedCharacterCount)")
+        let skippedSubstitutions = plan.chapters
+            .flatMap(\.diagnostics)
+            .filter { $0.kind == .substitutionSkipped }
+        for diagnostic in skippedSubstitutions {
+            print("  skipped unsupported IPA substitution: \(diagnostic.original)")
+        }
 
         let resolver = SpeechCredentialResolver()
         printCredentialSource(
@@ -1061,7 +1067,7 @@ struct ConvertCommand: ParsableCommand {
 
         // Load merged config for substitutions
         let mergedConfig = commandConfig
-        let substitutions = mergedConfig.speechSubstitution ?? [:]
+        let substitutions = mergedConfig.resolvedSpeechSubstitutions(engineID: .yapper)
 
         // Resolve metadata
         let (resolvedAuthor, resolvedTitle) = resolveMetadata(chapters: chapters)
@@ -1152,7 +1158,7 @@ struct ConvertCommand: ParsableCommand {
         let voices = assignVoices(engine: engine, chapterCount: chapters.count)
         let (resolvedAuthor, resolvedTitle) = resolveMetadata(chapters: chapters)
         let mergedConfig = commandConfig
-        let substitutions = mergedConfig.speechSubstitution ?? [:]
+        let substitutions = mergedConfig.resolvedSpeechSubstitutions(engineID: .yapper)
 
         // Derive output directory from -o flag or first input's directory
         let outputDir: String
@@ -1255,7 +1261,7 @@ struct ConvertCommand: ParsableCommand {
 
         // Load merged config for substitutions
         let mergedConfig = commandConfig
-        let substitutions = mergedConfig.speechSubstitution ?? [:]
+        let substitutions = mergedConfig.resolvedSpeechSubstitutions(engineID: .yapper)
 
         let selectedVoice = try resolveVoice(engine: engine, voiceName: voice)
 
@@ -1739,7 +1745,9 @@ struct ConvertCommand: ParsableCommand {
         let readStage = config.resolvedRenderStageDirections
         let renderIntro = config.resolvedRenderFrontmatter
         let renderFootnotes = config.resolvedRenderFootnotes
-        let dryRunSubs = config.speechSubstitution ?? [:]
+        let dryRunSubs = config.resolvedSpeechSubstitutions(engineID: selectedEngine.id)
+        let supportsIPA = SpeechEngineCapabilities.builtIn(for: selectedEngine.id)?.supportsIPA
+            ?? false
         let knownChars = Set(script.characters)
 
         print("Script mode: \(script.title ?? "Untitled")")
@@ -1790,7 +1798,11 @@ struct ConvertCommand: ParsableCommand {
                         let (stripped, _) = ScriptParser.stripFootnoteReferences(displayText)
                         displayText = stripped
                     }
-                    displayText = ScriptConfig.applySubstitutions(displayText, substitutions: dryRunSubs)
+                    displayText = ScriptConfig.applySubstitutions(
+                        displayText,
+                        substitutions: dryRunSubs,
+                        supportsIPA: supportsIPA
+                    )
                     let preview = displayText.prefix(60)
                     print("    \(char) (\(voiceName)): \(preview)\(displayText.count > 60 ? "..." : "")")
                 case .stageDirection:
@@ -1802,7 +1814,11 @@ struct ConvertCommand: ParsableCommand {
                             let (stripped, _) = ScriptParser.stripFootnoteReferences(displayText)
                             displayText = stripped
                         }
-                        displayText = ScriptConfig.applySubstitutions(displayText, substitutions: dryRunSubs)
+                        displayText = ScriptConfig.applySubstitutions(
+                            displayText,
+                            substitutions: dryRunSubs,
+                            supportsIPA: supportsIPA
+                        )
                         let preview = displayText.prefix(60)
                         print("    [stage] (\(voices.narrator)): \(preview)\(displayText.count > 60 ? "..." : "")")
                     }
@@ -1810,7 +1826,11 @@ struct ConvertCommand: ParsableCommand {
                     let renderTransitions = config.resolvedRenderTransitions
                     if renderTransitions {
                         var displayText = entry.text
-                        displayText = ScriptConfig.applySubstitutions(displayText, substitutions: dryRunSubs)
+                        displayText = ScriptConfig.applySubstitutions(
+                            displayText,
+                            substitutions: dryRunSubs,
+                            supportsIPA: supportsIPA
+                        )
                         let preview = displayText.prefix(60)
                         print("    [transition] (\(voices.narrator)): \(preview)\(displayText.count > 60 ? "..." : "")")
                     }
@@ -1872,7 +1892,12 @@ struct ConvertCommand: ParsableCommand {
         let roleConfig = config.scriptVoiceConfig(engineID.rawValue)
         let baseVoice = config.engineConfig(engineID.rawValue)?.voice
             ?? (engineKind == .fal ? "Rachel" : "alloy")
-        var characters = roleConfig?.characters ?? [:]
+        let configuredCharacters = roleConfig?.characters ?? [:]
+        var characters = Dictionary(uniqueKeysWithValues: script.characters.compactMap { character in
+            CaseInsensitiveConfigMap.value(for: character, in: configuredCharacters).map {
+                (character, $0)
+            }
+        })
         let missing = script.characters.filter { characters[$0] == nil }
         if !missing.isEmpty {
             guard roleConfig?.autoAssign == true else {
@@ -1936,7 +1961,11 @@ struct ConvertCommand: ParsableCommand {
             let introParts = remoteScriptIntroduction(script: script, config: config)
             if !introParts.isEmpty {
                 let item = RemoteScriptWorkItem(
-                    text: introParts.joined(separator: "\n\n"),
+                    text: preprocessScriptText(
+                        introParts.joined(separator: "\n\n"),
+                        config: config,
+                        engineID: engineKind.id
+                    ),
                     voice: voices.introduction,
                     role: .introduction,
                     speed: 1,
@@ -1958,7 +1987,8 @@ struct ConvertCommand: ParsableCommand {
                 scene: scene,
                 script: script,
                 config: config,
-                voices: voices
+                voices: voices,
+                engineID: engineKind.id
             )
             return items.isEmpty ? nil : (scene, items)
         }
@@ -2008,7 +2038,8 @@ struct ConvertCommand: ParsableCommand {
         scene: ScriptScene,
         script: ScriptDocument,
         config: ScriptConfig,
-        voices: ResolvedScriptVoiceSet
+        voices: ResolvedScriptVoiceSet,
+        engineID: SpeechEngineID
     ) -> [RemoteScriptWorkItem] {
         let dialogueSpeed = Double(config.dialogueSpeed ?? 1)
         let stageSpeed = Double(config.stageDirectionSpeed ?? 1)
@@ -2020,7 +2051,7 @@ struct ConvertCommand: ParsableCommand {
             for name in names {
                 guard let definition = script.footnotes[name] else { continue }
                 items.append(RemoteScriptWorkItem(
-                    text: preprocessScriptText(definition, config: config),
+                    text: preprocessScriptText(definition, config: config, engineID: engineID),
                     voice: voices.narrator,
                     role: .footnote,
                     speed: stageSpeed,
@@ -2035,7 +2066,7 @@ struct ConvertCommand: ParsableCommand {
                 guard let voice = voices.characters[character] else { continue }
                 let (text, footnotes) = ScriptParser.stripFootnoteReferences(entry.text)
                 items.append(RemoteScriptWorkItem(
-                    text: preprocessScriptText(text, config: config),
+                    text: preprocessScriptText(text, config: config, engineID: engineID),
                     voice: voice,
                     role: .dialogue,
                     speed: dialogueSpeed,
@@ -2050,7 +2081,7 @@ struct ConvertCommand: ParsableCommand {
                 )
                 let (text, footnotes) = ScriptParser.stripFootnoteReferences(titleCased)
                 items.append(RemoteScriptWorkItem(
-                    text: preprocessScriptText(text, config: config),
+                    text: preprocessScriptText(text, config: config, engineID: engineID),
                     voice: voices.narrator,
                     role: .stageDirection,
                     speed: stageSpeed,
@@ -2060,7 +2091,7 @@ struct ConvertCommand: ParsableCommand {
             case .transition:
                 guard config.resolvedRenderTransitions else { continue }
                 items.append(RemoteScriptWorkItem(
-                    text: preprocessScriptText(entry.text, config: config),
+                    text: preprocessScriptText(entry.text, config: config, engineID: engineID),
                     voice: voices.narrator,
                     role: .transition,
                     speed: stageSpeed,
@@ -2071,10 +2102,15 @@ struct ConvertCommand: ParsableCommand {
         return items
     }
 
-    private func preprocessScriptText(_ text: String, config: ScriptConfig) -> String {
+    private func preprocessScriptText(
+        _ text: String,
+        config: ScriptConfig,
+        engineID: SpeechEngineID
+    ) -> String {
         ProsePreprocessor.preprocess(
             text,
-            substitutions: config.speechSubstitution ?? [:]
+            substitutions: config.resolvedSpeechSubstitutions(engineID: engineID),
+            supportsIPA: SpeechEngineCapabilities.builtIn(for: engineID)?.supportsIPA ?? false
         ).text
     }
 
@@ -2218,7 +2254,7 @@ struct ConvertCommand: ParsableCommand {
 
         let renderIntro = config?.resolvedRenderFrontmatter ?? true
         let renderFootnotes = config?.resolvedRenderFootnotes ?? true
-        let substitutions = config?.speechSubstitution ?? [:]
+        let substitutions = config?.resolvedSpeechSubstitutions(engineID: .yapper) ?? [:]
 
         if !quiet {
             fputs("Script mode: \(script.title ?? "Untitled")\n", stderr)

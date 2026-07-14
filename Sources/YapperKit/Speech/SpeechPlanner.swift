@@ -135,11 +135,19 @@ public enum SpeechPlanner {
         sources: [SpeechSourceDocument],
         engineKind: SpeechEngineKind,
         substitutions: [String: String] = [:],
+        supportsIPA: Bool? = nil,
         engineSettingsSignature: String = ""
     ) -> SpeechConversionPlan {
         let constraints = constraintsForEngine(engineKind)
+        let resolvedSupportsIPA = supportsIPA
+            ?? SpeechEngineCapabilities.builtIn(for: engineKind.id)?.supportsIPA
+            ?? false
         let chapterPlans = sources.enumerated().map { index, source in
-            let preprocessed = ProsePreprocessor.preprocess(source.text, substitutions: substitutions)
+            let preprocessed = ProsePreprocessor.preprocess(
+                source.text,
+                substitutions: substitutions,
+                supportsIPA: resolvedSupportsIPA
+            )
             let chunkInputs = chunkText(preprocessed.text, constraints: constraints)
             let prepared = prepareChunks(
                 chunkInputs,

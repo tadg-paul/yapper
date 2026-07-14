@@ -60,11 +60,15 @@ struct SpeakCommand: ParsableCommand {
         let configuredEngine = mergedConfig.engineConfig(selectedEngine.rawValue)
         let resolvedSpeed = speed ?? configuredEngine?.speed ?? 1
         let configuredVoice = configuredEngine?.voice
-        let substitutions = mergedConfig.speechSubstitution ?? [:]
-        let inputText = ProsePreprocessor.preprocess(
+        let capabilities = SpeechEngineCapabilities.builtIn(for: selectedEngine)
+            ?? SpeechEngineCapabilities.yapper
+        let substitutions = mergedConfig.resolvedSpeechSubstitutions(engineID: selectedEngine)
+        let preprocessing = ProsePreprocessor.preprocess(
             rawText,
-            substitutions: substitutions
-        ).text
+            substitutions: substitutions,
+            supportsIPA: capabilities.supportsIPA
+        )
+        let inputText = preprocessing.text
 
         // Dry-run path: load only the voice registry (cheap, no 327MB model weights),
         // resolve the voice, print the resolved parameters, and exit without synthesising.
@@ -80,6 +84,9 @@ struct SpeakCommand: ParsableCommand {
             print("voice:  \(resolvedVoice)")
             print("speed:  \(resolvedSpeed)")
             print("text:   \(inputText)")
+            for diagnostic in preprocessing.diagnostics where diagnostic.kind == .substitutionSkipped {
+                print("diagnostic: skipped unsupported IPA substitution: \(diagnostic.original)")
+            }
             print("(dry run — no synthesis performed)")
             return
         }

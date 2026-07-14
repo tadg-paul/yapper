@@ -289,7 +289,10 @@ test_script_character_names_are_case_insensitive() {
 ## Scene One
 
 **ALICE:**
-Hello.
+Hello, Bob.
+
+**BOB:**
+Hello, Alice.
 MARKDOWN
     cat > "${config}" <<'YAML'
 yapper:
@@ -300,9 +303,11 @@ yapper:
         narrator: ash
         characters:
           alice: nova
+          bob: sage
 YAML
     output=$(CFFIXED_USER_HOME="${home}" HOME="${home}" "${YAPPER}" convert "${input}" \
         --config "${config}" --dry-run --non-interactive 2>&1)
     printf '%s' "${output}" | grep -q 'ALICE: nova' || return 1
+    printf '%s' "${output}" | grep -q 'BOB: sage' || return 1
 }
 run_test "RT-47.47" "script character mappings are case-insensitive" test_script_character_names_are_case_insensitive

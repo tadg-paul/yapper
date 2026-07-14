@@ -173,6 +173,7 @@ private enum BuiltInSpeechPlanning {
         let plan = SpeechPlanner.makePlan(
             sources: [source],
             engineKind: engineKind,
+            supportsIPA: SpeechEngineCapabilities.builtIn(for: engineKind.id)?.supportsIPA,
             engineSettingsSignature: "\(signature)|\(utterance.voice.rawValue)|\(utterance.speed)"
         )
         let payload = try EnginePreparedPayload(Payload(speed: utterance.speed), typeIdentifier: "speech-speed-v1")
