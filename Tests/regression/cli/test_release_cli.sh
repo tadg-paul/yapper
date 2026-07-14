@@ -415,5 +415,6 @@ run_test "FAST-CLI.6" "top-level help hides deprecated POC commands" test_releas
 
 source "${SCRIPT_DIR}/test_engine_config.sh"
 source "${SCRIPT_DIR}/test_config_validation.sh"
+source "${SCRIPT_DIR}/test_config_discovery.sh"
 
 summarise "release-safe CLI smoke"
