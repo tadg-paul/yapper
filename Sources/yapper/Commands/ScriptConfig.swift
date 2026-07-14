@@ -523,16 +523,20 @@ struct ScriptConfig: Decodable {
 
         // Merge dictionaries key-by-key
         if let overrideVoices = override.characterVoices {
-            result.characterVoices = CaseInsensitiveConfigMap.merging(
-                result.characterVoices ?? [:],
-                overrideVoices
-            )
+            result.characterVoices = overrideVoices.isEmpty
+                ? [:]
+                : CaseInsensitiveConfigMap.merging(
+                    result.characterVoices ?? [:],
+                    overrideVoices
+                )
         }
         if let overrideSubs = override.speechSubstitution {
-            result.speechSubstitution = CaseInsensitiveConfigMap.merging(
-                result.speechSubstitution ?? [:],
-                overrideSubs
-            )
+            result.speechSubstitution = overrideSubs.isEmpty
+                ? [:]
+                : CaseInsensitiveConfigMap.merging(
+                    result.speechSubstitution ?? [:],
+                    overrideSubs
+                )
         }
         applyNamespacedYapperConfig(from: override, to: &result)
 
@@ -547,11 +551,15 @@ struct ScriptConfig: Decodable {
             mergedYapper.engine = engine
         }
         if let overrideEngines = yapper.engines {
-            var engines = mergedYapper.engines ?? [:]
-            for (id, settings) in overrideEngines {
-                engines[id] = engines[id]?.merging(settings) ?? settings
+            if overrideEngines.isEmpty {
+                mergedYapper.engines = [:]
+            } else {
+                var engines = mergedYapper.engines ?? [:]
+                for (id, settings) in overrideEngines {
+                    engines[id] = engines[id]?.merging(settings) ?? settings
+                }
+                mergedYapper.engines = engines
             }
-            mergedYapper.engines = engines
         }
         if let script = yapper.script {
             mergedYapper.script = mergeCanonicalScript(mergedYapper.script, script)
@@ -559,10 +567,12 @@ struct ScriptConfig: Decodable {
         result.yapper = mergedYapper
 
         if let namespacedSubs = yapper.speechSubstitution {
-            result.speechSubstitution = CaseInsensitiveConfigMap.merging(
-                result.speechSubstitution ?? [:],
-                namespacedSubs
-            )
+            result.speechSubstitution = namespacedSubs.isEmpty
+                ? [:]
+                : CaseInsensitiveConfigMap.merging(
+                    result.speechSubstitution ?? [:],
+                    namespacedSubs
+                )
         }
 
         if let voices = yapper.voices {
@@ -570,10 +580,12 @@ struct ScriptConfig: Decodable {
             if let v = voices.narrator { result.narratorVoice = v }
             if let v = voices.intro { result.introVoice = v }
             if let characters = voices.characters {
-                result.characterVoices = CaseInsensitiveConfigMap.merging(
-                    result.characterVoices ?? [:],
-                    characters
-                )
+                result.characterVoices = characters.isEmpty
+                    ? [:]
+                    : CaseInsensitiveConfigMap.merging(
+                        result.characterVoices ?? [:],
+                        characters
+                    )
             }
         }
 
@@ -619,8 +631,12 @@ struct ScriptConfig: Decodable {
     ) -> CanonicalScriptYAMLConfig {
         var voices = lower?.voices ?? [:]
         if let upperVoices = upper.voices {
-            for (id, voiceConfig) in upperVoices {
-                voices[id] = mergeScriptVoice(voices[id], voiceConfig)
+            if upperVoices.isEmpty {
+                voices = [:]
+            } else {
+                for (id, voiceConfig) in upperVoices {
+                    voices[id] = mergeScriptVoice(voices[id], voiceConfig)
+                }
             }
         }
         var pacing = lower?.pacing ?? YapperPacingConfig()
@@ -640,7 +656,9 @@ struct ScriptConfig: Decodable {
     ) -> ScriptVoiceYAMLConfig {
         var characters = lower?.characters ?? [:]
         if let upperCharacters = upper.characters {
-            characters = CaseInsensitiveConfigMap.merging(characters, upperCharacters)
+            characters = upperCharacters.isEmpty
+                ? [:]
+                : CaseInsensitiveConfigMap.merging(characters, upperCharacters)
         }
         return ScriptVoiceYAMLConfig(
             autoAssign: upper.autoAssign ?? lower?.autoAssign,
@@ -657,10 +675,12 @@ struct ScriptConfig: Decodable {
             if let value = voices.narrator { result.narratorVoice = value }
             if let value = voices.intro { result.introVoice = value }
             if let characters = voices.characters {
-                result.characterVoices = CaseInsensitiveConfigMap.merging(
-                    result.characterVoices ?? [:],
-                    characters
-                )
+                result.characterVoices = characters.isEmpty
+                    ? [:]
+                    : CaseInsensitiveConfigMap.merging(
+                        result.characterVoices ?? [:],
+                        characters
+                    )
             }
         }
         if let pacing = yapper.script?.pacing {
@@ -816,6 +836,7 @@ private func mergeOptionalConfigMaps<Value>(
     _ upper: [String: Value]?
 ) -> [String: Value]? {
     guard lower != nil || upper != nil else { return nil }
+    if let upper, upper.isEmpty { return [:] }
     return CaseInsensitiveConfigMap.merging(lower ?? [:], upper ?? [:])
 }
 
