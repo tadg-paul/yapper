@@ -12,7 +12,7 @@ FORMULA_LOCAL="${PROJECT_ROOT}/Formula/yapper.rb"
 MANIFEST="${PROJECT_ROOT}/models/manifest.json"
 # Use the canonical repository name. GitHub read requests may redirect from the
 # old tigger04 owner, but release writes through gh api fail with HTTP 307.
-TAP_REPO="tadg-paul/homebrew-tap"
+TAP_REPO="tigger-developer/homebrew-tap"
 TAP_BRANCH="master"
 FORMULA_TAP_PATH="Formula/yapper.rb"
 SCHEME="yapper"
