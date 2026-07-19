@@ -282,4 +282,4 @@ yapper:
 
 ## Shared format
 
-The project `script.yaml` format is shared with [First Folio](https://github.com/tadg-paul/first-folio). Top-level metadata and `render.*` are joint concerns, `yapper.*` is Yapper-owned, and `folio.*` is First Folio-owned. Each product ignores the other's namespace. Product-specific global files remain separate.
+The project `script.yaml` format is shared with [First Folio](https://github.com/tigger-developer/first-folio). Top-level metadata and `render.*` are joint concerns, `yapper.*` is Yapper-owned, and `folio.*` is First Folio-owned. Each product ignores the other's namespace. Product-specific global files remain separate.
