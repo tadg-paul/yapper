@@ -337,13 +337,8 @@ public enum ProsePreprocessor {
         appendNormalizedSymbolRun(symbolRun, to: &result)
 
         guard result != text else { return text }
-        let collapsed = result.replacingOccurrences(
-            of: #"[ \t]{2,}"#,
-            with: " ",
-            options: .regularExpression
-        )
-        recordSymbolCleanup(original: text, replacement: collapsed, diagnostics: &diagnostics)
-        return collapsed
+        recordSymbolCleanup(original: text, replacement: result, diagnostics: &diagnostics)
+        return result
     }
 
     private static func normalizedSymbolRun(_ run: String) -> String {
