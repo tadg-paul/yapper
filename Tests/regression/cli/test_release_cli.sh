@@ -50,6 +50,24 @@ test_release_speak_hyphen_preprocessing() {
 }
 run_test "RT-39.3" "speak and yap dry-run normalize intra-word hyphens" test_release_speak_hyphen_preprocessing
 
+test_release_speak_rejects_symbol_only_input() {
+    local output
+    if output=$(printf '................................................................' | "${YAPPER}" speak --dry-run 2>&1); then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Input contains no speakable words or numbers.' || return 1
+}
+run_test "RT-48.5" "speak rejects punctuation-only input before synthesis" test_release_speak_rejects_symbol_only_input
+
+test_release_yap_rejects_symbol_only_input() {
+    local output
+    if output=$(printf '😵‍💫 @#$%^&*' | "${YAP_LINK}" --dry-run 2>&1); then
+        return 1
+    fi
+    printf '%s' "${output}" | grep -q 'Input contains no speakable words or numbers.' || return 1
+}
+run_test "RT-48.6" "yap rejects symbol-only input before synthesis" test_release_yap_rejects_symbol_only_input
+
 test_release_convert_hyphen_preprocessing() {
     local dir input output
     dir=$(mktemp -d)

@@ -65,6 +65,52 @@ struct ProsePreprocessorTests {
         #expect(result.text == "sea holly, ice cream, and car park.")
     }
 
+    @Test("RT-48.1: a long full-stop run becomes one sentence boundary")
+    func longFullStopRunBecomesSentenceBoundary() {
+        let punctuation = String(repeating: ".", count: 512)
+        let result = ProsePreprocessor.preprocess("hello \(punctuation) world")
+
+        #expect(result.text == "hello. world")
+        #expect(result.diagnostics.contains {
+            $0.kind == .cleanup && $0.original.contains(punctuation)
+        })
+    }
+
+    @Test("RT-48.2: excessive question and exclamation runs collapse")
+    func excessiveTerminalPunctuationRunsCollapse() {
+        let result = ProsePreprocessor.preprocess("What???????? Stop!!!!!!!!")
+
+        #expect(result.text == "What? Stop!")
+    }
+
+    @Test("RT-48.3: mixed symbol runs do not reach prepared speech text")
+    func mixedSymbolRunsBecomeSentenceBoundaries() {
+        let result = ProsePreprocessor.preprocess("hello .!@#$%^&*()_+= world")
+
+        #expect(result.text == "hello. world")
+    }
+
+    @Test("RT-48.4: ordinary prose punctuation remains intact")
+    func ordinaryProsePunctuationRemainsIntact() {
+        let input = #"“Well, don't stop...” she said; then asked: “Ready?”"#
+
+        #expect(ProsePreprocessor.preprocess(input).text == input)
+    }
+
+    @Test("RT-48.7: accented and combining-mark text remains intact")
+    func accentedAndCombiningMarkTextRemainsIntact() {
+        let input = "Taḋg met Ca\u{301}it in Dún Laoghaire."
+
+        #expect(ProsePreprocessor.preprocess(input).text == input)
+    }
+
+    @Test("RT-48.8: non-Latin text remains speakable")
+    func nonLatinTextRemainsSpeakable() {
+        let input = "Γειά σου. 你好。 مرحبًا."
+
+        #expect(ProsePreprocessor.preprocess(input).text == input)
+    }
+
     @Test("RT-34.9 and RT-34.10: emphasis normalizes before speech substitutions")
     func substitutionsApplyAfterMarkupNormalization() {
         let result = ProsePreprocessor.preprocess(
