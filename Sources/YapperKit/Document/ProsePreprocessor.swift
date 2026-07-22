@@ -63,6 +63,8 @@ public struct ProsePreprocessResult: Codable, Equatable, Sendable {
 }
 
 public enum ProsePreprocessor {
+    private static let maximumSafeSymbolRunLength = 6
+
     public static func preprocess(
         _ text: String,
         substitutions: [String: String] = [:],
@@ -83,9 +85,13 @@ public enum ProsePreprocessor {
             diagnostics: &diagnostics
         )
         let hyphenNormalized = normalizeIntraWordHyphens(substituted)
+        let speechNormalized = normalizeUnsafeSymbolRuns(
+            hyphenNormalized,
+            diagnostics: &diagnostics
+        )
 
         return ProsePreprocessResult(
-            text: hyphenNormalized,
+            text: speechNormalized,
             sectionBreaks: sectionBreaks,
             diagnostics: diagnostics
         )
@@ -308,6 +314,70 @@ public enum ProsePreprocessor {
         )
     }
 
+    private static func normalizeUnsafeSymbolRuns(
+        _ text: String,
+        diagnostics: inout [ProsePreprocessDiagnostic]
+    ) -> String {
+        guard text.contains(where: \.isSpeakable) else {
+            recordSymbolCleanup(original: text, replacement: "", diagnostics: &diagnostics)
+            return ""
+        }
+
+        var result = ""
+        var symbolRun = ""
+        for character in text {
+            if character.isSpeakable || character.isWhitespace {
+                appendNormalizedSymbolRun(symbolRun, to: &result)
+                symbolRun = ""
+                result.append(character)
+            } else {
+                symbolRun.append(character)
+            }
+        }
+        appendNormalizedSymbolRun(symbolRun, to: &result)
+
+        guard result != text else { return text }
+        let collapsed = result.replacingOccurrences(
+            of: #"[ \t]{2,}"#,
+            with: " ",
+            options: .regularExpression
+        )
+        recordSymbolCleanup(original: text, replacement: collapsed, diagnostics: &diagnostics)
+        return collapsed
+    }
+
+    private static func normalizedSymbolRun(_ run: String) -> String {
+        guard run.count > maximumSafeSymbolRunLength else { return run }
+        if run.contains(".") { return "." }
+        if run.contains("?") { return "?" }
+        if run.contains("!") { return "!" }
+        return ""
+    }
+
+    private static func appendNormalizedSymbolRun(_ run: String, to result: inout String) {
+        let normalized = normalizedSymbolRun(run)
+        guard !normalized.isEmpty else { return }
+        if normalized == "." || normalized == "?" || normalized == "!" {
+            while result.last == " " || result.last == "\t" {
+                result.removeLast()
+            }
+        }
+        result += normalized
+    }
+
+    private static func recordSymbolCleanup(
+        original: String,
+        replacement: String,
+        diagnostics: inout [ProsePreprocessDiagnostic]
+    ) {
+        guard original != replacement else { return }
+        diagnostics.append(ProsePreprocessDiagnostic(
+            kind: .cleanup,
+            original: original,
+            replacement: replacement
+        ))
+    }
+
     private static func applySubstitutions(
         _ text: String,
         substitutions: [String: String],
@@ -414,6 +484,12 @@ public enum ProsePreprocessor {
 }
 
 private extension Character {
+    var isSpeakable: Bool {
+        unicodeScalars.contains {
+            CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0)
+        }
+    }
+
     var isAlphaNumeric: Bool {
         unicodeScalars.allSatisfy {
             CharacterSet.alphanumerics.contains($0)

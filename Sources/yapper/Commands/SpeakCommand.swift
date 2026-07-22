@@ -69,6 +69,9 @@ struct SpeakCommand: ParsableCommand {
             supportsIPA: capabilities.supportsIPA
         )
         let inputText = preprocessing.text
+        guard !inputText.isEmpty else {
+            throw ValidationError("Input contains no speakable words or numbers.")
+        }
 
         // Dry-run path: load only the voice registry (cheap, no 327MB model weights),
         // resolve the voice, print the resolved parameters, and exit without synthesising.

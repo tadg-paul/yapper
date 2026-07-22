@@ -61,7 +61,7 @@ run_test "RT-48.5" "speak rejects punctuation-only input before synthesis" test_
 
 test_release_yap_rejects_symbol_only_input() {
     local output
-    if output=$(printf '😵‍💫 @#$%^&*' | "${YAP_LINK}" --dry-run 2>&1); then
+    if output=$(printf '%s' '😵‍💫 @#$%^&*' | "${YAP_LINK}" --dry-run 2>&1); then
         return 1
     fi
     printf '%s' "${output}" | grep -q 'Input contains no speakable words or numbers.' || return 1
