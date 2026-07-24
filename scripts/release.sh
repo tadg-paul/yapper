@@ -252,7 +252,8 @@ else
     smoke_txt="${build_dir}/smoke.txt"
     printf 'Smoke test.\n' > "${smoke_txt}"
     smoke_m4a_yapper="${build_dir}/smoke-yapper.m4a"
-    "${smoke_prefix}/bin/yapper" convert "${smoke_txt}" -o "${smoke_m4a_yapper}" --voice af_heart \
+    "${smoke_prefix}/bin/yapper" convert "${smoke_txt}" -o "${smoke_m4a_yapper}" \
+        --voice af_heart --non-interactive \
         >"${build_dir}/smoke-yapper.log" 2>&1 \
         || die "smoke: bin/yapper convert synthesis failed. Log:
 $(cat "${build_dir}/smoke-yapper.log")"
