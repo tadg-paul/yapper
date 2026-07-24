@@ -148,4 +148,4 @@ See [NOTICE](NOTICE) for full attribution details.
 
 ## Licence
 
-Apache 2.0 - Copyright Taḋg Paul. See [LICENSE](LICENSE).
+Apache 2.0 - Copyright Tadhg O'Brien. See [LICENSE](LICENSE).

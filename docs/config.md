@@ -238,7 +238,7 @@ A full `script.yaml` placed alongside a play file:
 ```yaml
 title: "About Time"
 subtitle: "A Two-Act Play"
-author: "Tadg Paul"
+author: "Tadhg O'Brien"
 
 render:
   stage-directions: true

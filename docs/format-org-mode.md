@@ -151,7 +151,7 @@ The character table uses standard org-mode table syntax:
 
 ```org
 #+TITLE: About Time
-#+AUTHOR: Tadg Paul
+#+AUTHOR: Tadhg O'Brien
 
 * Characters
 |-------+-------------------------------|

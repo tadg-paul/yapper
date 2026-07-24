@@ -2,7 +2,7 @@
 #+SUBTITLE: Working Title
 #+DATE: 2026-04-27
 #+VERSION: Draft 0.1
-#+AUTHOR: Taḋg Paul
+#+AUTHOR: Tadhg O'Brien
 #+STARTUP: showeverything
 #+OPTIONS: toc:nil
 

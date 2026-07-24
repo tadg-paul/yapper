@@ -1,7 +1,7 @@
 #+TITLE: About Time [working title]
 #+SUBTITLE: An excerpt from a play
 #+TEMPLATE: play
-#+AUTHOR: Taḋg Paul
+#+AUTHOR: Tadhg O'Brien
 #+STARTUP: showeverything
 #+OPTIONS: toc:nil
 

@@ -291,7 +291,7 @@ Fountain files use the same `script.yaml` configuration as org-mode and markdown
 
 ```fountain
 Title: About Time
-Author: Tadg Paul
+Author: Tadhg O'Brien
 Draft date: 2026-04-26
 
 INT. KITCHEN - DAY

@@ -182,7 +182,7 @@ Default voice: random per invocation (pinnable via `--voice` flag or `$YAPPER_VO
 
 ## Licence
 
-Apache 2.0 - Copyright Taḋg Paul
+Apache 2.0 - Copyright Tadhg O'Brien
 
 ---
 

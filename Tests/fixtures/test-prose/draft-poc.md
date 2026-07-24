@@ -1,6 +1,6 @@
 # About Time [working title]
 
-*by Taḋg Paul*
+*by Tadhg O'Brien*
 
 | Character  | Description                                         |
 |------------|-----------------------------------------------------|
